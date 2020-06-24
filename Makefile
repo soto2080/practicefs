@@ -1,8 +1,8 @@
-COMPILER = gcc
-FILESYSTEM_FILES = practicefs.c
+COMPILER = g++ -std=c++17
+FILESYSTEM_FILES = practicefs.cpp
 
 build: $(FILESYSTEM_FILES)
-	$(COMPILER) -D_GNU_SOURCE $(FILESYSTEM_FILES) -o practicefs `pkg-config fuse3 --cflags --libs`
+	$(COMPILER) $(FILESYSTEM_FILES) -o practicefs `pkg-config fuse3 --cflags --libs`
 	echo 'To Mount: ./practicefs -f [mount point]'
 
 clean:
