@@ -87,8 +87,24 @@ void * op_init(struct fuse_conn_info *conn, struct fuse_config *config){
 	sb.dmap_size = DMAP_SIZE;
 	sb.num_free_dblk = DMAP_SIZE;
 	sb.name_size = NAME_LENGTH;
-	sb.cur_inode = 0;
+	sb.cur_inode = 1; // 0 is for root
 	std::cout<<"Init SuperBlock"<<std::endl;
+
+	imap.set(root_inode_num);
+	
+	inodes[root_inode_num].i_number = root_inode_num;
+	inodes[root_inode_num].i_blocks = 1;
+	inodes[root_inode_num].i_size = 4;
+	inodes[root_inode_num].i_nlink = 2;
+
+	std::string s = "/";
+	inodes[root_inode_num].i_name = s.c_str();
+	inodes[root_inode_num].i_uid = getuid();
+	inodes[root_inode_num].i_gid = getgid();
+	inodes[root_inode_num].i_type = IFDIR;
+	
+	std::cout<<"Init Root Inode:"<< inodes[root_inode_num].i_name <<std::endl;
+
 	//memset(blocks, 0, sizeof(blocks) * sb.dmap_size);
 	//memset(inodes, 0, sizeof(inodes) * sb.imap_size);
 	return nullptr;

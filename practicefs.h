@@ -26,6 +26,23 @@ struct datablock {
 };
 
 /*
+SuperBlock:
+*/
+const int root_inode_num = 0;
+#define NAME_LENGTH 28
+struct superblock {
+    uint32_t imap_size;
+    uint32_t dmap_size;
+    uint32_t blk_size;
+    uint32_t num_blks;
+    uint64_t fs_size;
+    uint32_t name_size;
+    uint32_t cur_inode;
+    uint32_t num_free_inode;
+    uint32_t num_free_dblk;
+};
+
+/*
 Inode:
 */
 
@@ -51,6 +68,7 @@ enum INODE_TYPE {
 
 struct inode {
     enum INODE_TYPE i_type; /* What kind of file this inode point to */
+    const char            *i_name;    /* File readable name*/
     uint32_t		i_nlink;	/* File link count. */
 	uint32_t	    i_uid;		/* File owner. */
 	uint32_t	    i_gid;		/* File group. */
@@ -61,21 +79,6 @@ struct inode {
     // Time Related
 };
 
-/*
-SuperBlock:
-*/
-#define NAME_LENGTH 256
-struct superblock {
-    uint32_t imap_size;
-    uint32_t dmap_size;
-    uint32_t blk_size;
-    uint32_t num_blks;
-    uint64_t fs_size;
-    uint32_t name_size;
-    uint32_t cur_inode;
-    uint32_t num_free_inode;
-    uint32_t num_free_dblk;
-};
 
 /*
 Others:
