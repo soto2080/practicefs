@@ -27,8 +27,10 @@ static int op_getattr( const char *path, struct stat *st, struct fuse_file_info 
 	st->st_gid = getgid(); // The group of the file/directory is the same as the group of the user who mounted the filesystem
 	if ( strcmp( path, "/" ) == 0)
 	{
+		st->st_uid = inodes[root_inode_num].i_uid; 
+		st->st_gid = inodes[root_inode_num].i_gid;
 		st->st_mode = S_IFDIR | 0755;
-		st->st_nlink = 2; // Why "two" hardlinks instead of "one"? The answer is here: http://unix.stackexchange.com/a/101536
+		st->st_nlink = inodes[root_inode_num].i_nlink; // Why "two" hardlinks instead of "one"? The answer is here: http://unix.stackexchange.com/a/101536
 	}
 	return 0;
 }
@@ -91,6 +93,7 @@ void * op_init(struct fuse_conn_info *conn, struct fuse_config *config){
 	std::cout<<"Init SuperBlock"<<std::endl;
 
 	imap.set(root_inode_num);
+	dmap.set(0);
 	
 	inodes[root_inode_num].i_number = root_inode_num;
 	inodes[root_inode_num].i_blocks = 1;
@@ -103,6 +106,7 @@ void * op_init(struct fuse_conn_info *conn, struct fuse_config *config){
 	inodes[root_inode_num].i_gid = getgid();
 	inodes[root_inode_num].i_type = IFDIR;
 	
+	inodes[root_inode_num].i_block[0] = &blocks[0];
 	std::cout<<"Init Root Inode:"<< inodes[root_inode_num].i_name <<std::endl;
 
 	//memset(blocks, 0, sizeof(blocks) * sb.dmap_size);
