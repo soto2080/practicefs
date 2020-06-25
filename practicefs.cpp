@@ -21,7 +21,7 @@ struct inode inodes[IMAP_SIZE];
 // Functions
 static int op_getattr( const char *path, struct stat *st, struct fuse_file_info *info)
 {
-	std::cout<<"Geting attr"<<std::endl;
+	std::cout<<"Geting attr: "<<path<<std::endl;
 	memset(st, 0, sizeof(struct stat));
 	st->st_uid = getuid(); // The owner of the file/directory is the user who mounted the filesystem
 	st->st_gid = getgid(); // The group of the file/directory is the same as the group of the user who mounted the filesystem
@@ -35,43 +35,44 @@ static int op_getattr( const char *path, struct stat *st, struct fuse_file_info 
 
 static int op_mknod( const char *path, mode_t mode, dev_t rdev )
 {
-	std::cout<<"Making inode"<<std::endl;
+	std::cout<<"Making inode: "<<path<<std::endl;
 	return 0;
 }
 
 static int op_mkdir( const char *path, mode_t mode )
 {
-	std::cout<<"Making dir"<<std::endl;
+	std::cout<<"Making dir: "<<path<<std::endl;
 	return 0;
 }
 
 static int op_unlink( const char *path)
 {
-	std::cout<<"Unlinking inode count by 1"<<std::endl;
+	std::cout<<"Unlinking inode"<<path<<" count by 1"<<std::endl;
 	return 0;
 }
 
 static int op_rmdir( const char *path)
 {
-	std::cout<<"Removing dir"<<std::endl;
+	std::cout<<"Removing dir: "<<path<<std::endl;
 	return 0;
 }
 
 static int op_read( const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi )
 {
-	std::cout<<"Reading file"<<std::endl;
+	std::cout<<"Reading file: "<<path<<std::endl;
 	return 0;
 }
 
 static int op_write( const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-	std::cout<<"Writing file"<<std::endl;
+	std::cout<<"Writing file: "<<path<<std::endl;
 	return 0;
 }
 
 static int op_readdir( const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flag)
 {
-	std::cout<<"Reading dir"<<std::endl;
+	std::cout<<"Reading dir: "<<path<<std::endl;
+
 	filler( buffer, ".", NULL, 0, FUSE_FILL_DIR_PLUS); // Current Directory
 	filler( buffer, "..", NULL, 0, FUSE_FILL_DIR_PLUS); // Parent Directory
 	return 0;
@@ -95,6 +96,7 @@ void * op_init(struct fuse_conn_info *conn, struct fuse_config *config){
 
 static int op_utimens( const char *path, const struct timespec tv[2], struct fuse_file_info *info)
 {
+	std::cout<<"Setting time: "<<path<<std::endl;
 	return 0;
 }
 // VFS Operations
