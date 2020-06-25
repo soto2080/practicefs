@@ -68,7 +68,7 @@ struct inode {
 	uint64_t	    i_size;		/* File byte count. */
 	uint64_t	    i_blocks;	/* Blocks actually held. */
     uint32_t        i_number;   /* The identity of the inode. */
-    struct datablock  *i_block[EXT2_N_BLOCKS]; /* pointer to datablock */
+    struct datablock  *i_block; /* pointer to datablock */
     // Time Related
 };
 
