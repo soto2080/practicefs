@@ -2,6 +2,7 @@
 
 #define PRACTICEFS
 #include <string>
+#include <vector>
 #define FUSE_USE_VERSION 31
 
 #include <fuse.h>
@@ -75,7 +76,10 @@ struct inode {
 	size_t	    i_blocks;	/* Blocks actually held. */
     size_t        i_number;   /* The identity of the inode. */
     size_t        i_parent;   /* The parent of the inode. */
-    struct datablock  *i_block[EXT2_N_BLOCKS]; /* pointer to datablock */
+    union{
+        struct datablock  *i_block[EXT2_N_BLOCKS]; /* pointer to datablock */
+        std::vector<struct directory_entry> *entries; /* pointer to dir content list */
+    };
     // Time Related
 };
 
@@ -86,7 +90,7 @@ Others:
 
 
 struct directory_entry {
-  int inode_num;
+  size_t inode_num;
   std::string *name;
 };
 
