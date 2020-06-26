@@ -205,7 +205,6 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
   sb.num_free_inode = IMAP_SIZE;
   sb.dmap_size = DMAP_SIZE;
   sb.num_free_dblk = DMAP_SIZE;
-  sb.name_size = NAME_LENGTH;
   sb.cur_inode = 1; // 0 is for root
   std::cout << "Init SuperBlock" << std::endl;
 

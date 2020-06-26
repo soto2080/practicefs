@@ -30,14 +30,12 @@ struct datablock {
 SuperBlock:
 */
 const int root_inode_num = 0;
-#define NAME_LENGTH 28
 struct superblock {
     size_t imap_size;
     size_t dmap_size;
     size_t blk_size;
     size_t num_blks;
     size_t fs_size;
-    size_t name_size;
     size_t cur_inode;
     size_t num_free_inode;
     size_t num_free_dblk;
@@ -89,7 +87,7 @@ Others:
 
 struct directory_entry {
   int inode_num;
-  char file_name[NAME_LENGTH];
+  std::string *name;
 };
 
 #endif
