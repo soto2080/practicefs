@@ -90,6 +90,12 @@ int init_inode(std::string& name ,size_t inum, size_t parent, INODE_TYPE type){
   inodes[inum].i_gid = getgid();
   inodes[inum].i_name = &name;
 
+  // inject the inode into its parent
+  struct directory_entry entry;
+  entry.inode_num = inum;
+  entry.name = &name;
+  inodes[parent].entries->push_back(entry);
+  
   return 0;
 }
 
@@ -134,18 +140,14 @@ static int op_mknod(const char *path, mode_t mode, dev_t rdev) {
   // Find parent dir first
   std::vector<std::string> splited_path = split_path(path);
   uint32_t parent = 0;
-  std::string test = "/";
-  
 
   // Init a new inode as a regular file
   // Get a inode num first
   int i_num = alloc_inum();
-  //std::cout<< imap.to_string()<<std::endl;
 
-  // Init the relative inode to the inum
+  // Init the new inode to the inum
   init_inode(splited_path.back(), i_num, parent, IFREG);
   print_inode(i_num);
-  // inject the inode into its parent
   return 0;
 }
 
@@ -153,15 +155,15 @@ static int op_mkdir(const char *path, mode_t mode) {
   std::cout << "Making dir: " << path << std::endl;
   // Find parent dir first
   std::vector<std::string> splited_path = split_path(path);
+  uint32_t parent = 0;
 
-  // Init a new inode as a dir
+  // Init a new inode as a regular file
   // Get a inode num first
   int i_num = alloc_inum();
-  std::cout<< imap.to_string()<<std::endl;
-  // Init the relative inode to the inum
-  //init_inode(splited_path.back().c_str(), i_num, IFDIR);
+
+  // Init the new inode to the inum
+  init_inode(splited_path.back(), i_num, parent, IFDIR);
   print_inode(i_num);
-  // Inject the inode into its parent
   return 0;
 }
 
@@ -194,6 +196,11 @@ static int op_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 
   filler(buffer, ".", NULL, 0, FUSE_FILL_DIR_PLUS);  // Current Directory
   filler(buffer, "..", NULL, 0, FUSE_FILL_DIR_PLUS); // Parent Directory
+  if ( strcmp( path, "/" ) == 0 ) // If the user is trying to show the files/directories of the root directory show the following
+	{
+		for(auto entry: *inodes[0].entries)
+			filler( buffer, entry.name->c_str(), NULL, 0 ,FUSE_FILL_DIR_PLUS);
+	}
   return 0;
 }
 
