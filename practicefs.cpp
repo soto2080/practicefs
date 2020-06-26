@@ -30,6 +30,7 @@ struct inode inodes[IMAP_SIZE];
 std::vector<std::string> split_path(const char *path) {
   std::string str(path);
   std::vector<std::string> ancestor;
+  ancestor.push_back("/");
 
   size_t pos = 0;
   std::string name;
@@ -37,7 +38,6 @@ std::vector<std::string> split_path(const char *path) {
   while (end != std::string::npos) {
     
 	if (str.substr(pos, end - pos).length() > 0) {
-      ancestor.push_back("/");
   		ancestor.push_back(str.substr(pos, end - pos));
     }
     pos = end + 1;
@@ -45,29 +45,30 @@ std::vector<std::string> split_path(const char *path) {
   }
 
   if (str.substr(pos, end).length() > 0) {
-    ancestor.push_back("/");
   	ancestor.push_back(str.substr(pos, end));
   }
   
   // Debug logging
-  //for (auto x : ancestor) {
-  //  std::cout << x << std::endl;
-  //}
+  for (auto x : ancestor) {
+    std::cout << x << std::endl;
+  }
   return ancestor;
 }
 
 // Find inode number by name
-uint32_t find_inum(const char* name)
+size_t find_inum(std::string name)
 {
-	for(auto i: inodes){
-		if(strcmp(name, i.i_name)==0)
-			return i.i_number;
-	}
+  // It's broken
+  size_t idx = 0;
+	while(idx < IMAP_SIZE){
+    if( imap.test(idx) && *inodes[idx].i_name == name)
+      return idx;
+  }
 	return -1;
 }
 
 // Allocate an inode number for new inode
-uint32_t alloc_inum(){
+size_t alloc_inum(){
   size_t idx = 0;
   while(idx < imap.size() && imap.test(idx))
   {
@@ -77,26 +78,28 @@ uint32_t alloc_inum(){
   return idx;
 }
 
-int init_inode(const char* name ,uint32_t inum, INODE_TYPE type){
+int init_inode(std::string& name ,size_t inum, size_t parent, INODE_TYPE type){
   memset(&inodes[inum], 0, sizeof(struct inode));
   inodes[inum].i_type = type;
   inodes[inum].i_blocks = 0;
   inodes[inum].i_size = 0;
   inodes[inum].i_number = inum;
+  inodes[inum].i_parent = parent;
   inodes[inum].i_nlink = 1;
   inodes[inum].i_uid = getuid();
   inodes[inum].i_gid = getgid();
-  inodes[inum].i_name = name;
+  inodes[inum].i_name = &name;
 
   return 0;
 }
 
-void print_inode(uint32_t inum){
-  std::cout<<"i_name: "     << inodes[inum].i_name   << std::endl
+void print_inode(size_t inum){
+  std::cout<<"i_name: "     << *inodes[inum].i_name   << std::endl
            <<"i_uid: "        << inodes[inum].i_uid    << std::endl
            <<"i_gid: "        << inodes[inum].i_gid    << std::endl
            <<"i_nlink: "      << inodes[inum].i_nlink  << std::endl
            <<"i_number: "     << inodes[inum].i_number << std::endl
+           <<"i_parent: "     << inodes[inum].i_parent << std::endl
            <<"i_type: "       << inodes[inum].i_type   << std::endl
            <<"i_size: "       << inodes[inum].i_size   << std::endl
            <<"i_blocks: "     << inodes[inum].i_blocks << std::endl;
@@ -130,18 +133,17 @@ static int op_mknod(const char *path, mode_t mode, dev_t rdev) {
   std::cout << "Making inode: " << path << std::endl;
   // Find parent dir first
   std::vector<std::string> splited_path = split_path(path);
-  //for(auto name: splited_path)
-  //{
-  //  if(find_inum(name.c_str()) != -1)
-	//  std::cout<<name<<" is at inode: "<<find_inum(name.c_str())<<std::endl;
-  //}
-  std::cout<<"Before alloc"<<std::endl;
+  uint32_t parent = 0;
+  std::string test = "/";
+  
+
   // Init a new inode as a regular file
   // Get a inode num first
   int i_num = alloc_inum();
-  std::cout<< imap.to_string()<<std::endl;
+  //std::cout<< imap.to_string()<<std::endl;
+
   // Init the relative inode to the inum
-  init_inode(splited_path.back().c_str(), i_num, IFREG);
+  init_inode(splited_path.back(), i_num, parent, IFREG);
   print_inode(i_num);
   // inject the inode into its parent
   return 0;
@@ -151,16 +153,13 @@ static int op_mkdir(const char *path, mode_t mode) {
   std::cout << "Making dir: " << path << std::endl;
   // Find parent dir first
   std::vector<std::string> splited_path = split_path(path);
-  auto parent = splited_path.rbegin();
-  ++parent;
-  std::cout<<parent->c_str()<<std::endl;
-  std::cout<< splited_path.back() << "'s parent is: "  <<" at "<< find_inum(parent->c_str()) << std::endl;
+
   // Init a new inode as a dir
   // Get a inode num first
   int i_num = alloc_inum();
   std::cout<< imap.to_string()<<std::endl;
   // Init the relative inode to the inum
-  init_inode(splited_path.back().c_str(), i_num, IFDIR);
+  //init_inode(splited_path.back().c_str(), i_num, IFDIR);
   print_inode(i_num);
   // Inject the inode into its parent
   return 0;
@@ -217,15 +216,16 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
   inodes[root_inode_num].i_blocks = 1;
   inodes[root_inode_num].i_size = 4;
   inodes[root_inode_num].i_nlink = 2;
+  inodes[root_inode_num].i_parent = 0;
 
   std::string s = "/";
-  inodes[root_inode_num].i_name = s.c_str();
+  inodes[root_inode_num].i_name = &s;
   inodes[root_inode_num].i_uid = getuid();
   inodes[root_inode_num].i_gid = getgid();
   inodes[root_inode_num].i_type = IFDIR;
 
   inodes[root_inode_num].i_block[0] = &blocks[0];
-  std::cout << "Init Root Inode:" << inodes[root_inode_num].i_name << std::endl;
+  std::cout << "Init Root Inode:" << *inodes[root_inode_num].i_name << std::endl;
 
   // memset(blocks, 0, sizeof(blocks) * sb.dmap_size);
   // memset(inodes, 0, sizeof(inodes) * sb.imap_size);

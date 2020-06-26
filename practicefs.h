@@ -1,6 +1,7 @@
 #ifndef PRACTICEFS
 
 #define PRACTICEFS
+#include <string>
 #define FUSE_USE_VERSION 31
 
 #include <fuse.h>
@@ -31,15 +32,15 @@ SuperBlock:
 const int root_inode_num = 0;
 #define NAME_LENGTH 28
 struct superblock {
-    uint32_t imap_size;
-    uint32_t dmap_size;
-    uint32_t blk_size;
-    uint32_t num_blks;
-    uint64_t fs_size;
-    uint32_t name_size;
-    uint32_t cur_inode;
-    uint32_t num_free_inode;
-    uint32_t num_free_dblk;
+    size_t imap_size;
+    size_t dmap_size;
+    size_t blk_size;
+    size_t num_blks;
+    size_t fs_size;
+    size_t name_size;
+    size_t cur_inode;
+    size_t num_free_inode;
+    size_t num_free_dblk;
 };
 
 /*
@@ -68,13 +69,14 @@ enum INODE_TYPE {
 
 struct inode {
     enum INODE_TYPE i_type; /* What kind of file this inode point to */
-    const char            *i_name;    /* File readable name*/
-    uint32_t		i_nlink;	/* File link count. */
-	uint32_t	    i_uid;		/* File owner. */
-	uint32_t	    i_gid;		/* File group. */
-	uint64_t	    i_size;		/* File byte count. */
-	uint64_t	    i_blocks;	/* Blocks actually held. */
-    uint32_t        i_number;   /* The identity of the inode. */
+    std::string     *i_name;    /* File readable name*/
+    size_t		i_nlink;	/* File link count. */
+	size_t	    i_uid;		/* File owner. */
+	size_t	    i_gid;		/* File group. */
+	size_t	    i_size;		/* File byte count. */
+	size_t	    i_blocks;	/* Blocks actually held. */
+    size_t        i_number;   /* The identity of the inode. */
+    size_t        i_parent;   /* The parent of the inode. */
     struct datablock  *i_block[EXT2_N_BLOCKS]; /* pointer to datablock */
     // Time Related
 };
