@@ -5,6 +5,7 @@
  */
 
 #include "practicefs.h"
+#include <bits/stdint-uintn.h>
 #include <bitset>
 #include <cstddef>
 #include <iostream>
@@ -35,14 +36,16 @@ std::vector<std::string> split_path(const char *path) {
   auto end = str.find('/');
   while (end != std::string::npos) {
     
-	if (str.substr(pos, end - pos).length() > 0) 
+	if (str.substr(pos, end - pos).length() > 0) {
+      ancestor.push_back("/");
   		ancestor.push_back(str.substr(pos, end - pos));
-	
+    }
     pos = end + 1;
     end = str.find('/', pos);
   }
 
   if (str.substr(pos, end).length() > 0) {
+    ancestor.push_back("/");
   	ancestor.push_back(str.substr(pos, end));
   }
   
@@ -57,7 +60,7 @@ std::vector<std::string> split_path(const char *path) {
 uint32_t find_inum(const char* name)
 {
 	for(auto i: inodes){
-		if(strcmp(name, i.i_name))
+		if(strcmp(name, i.i_name)==0)
 			return i.i_number;
 	}
 	return -1;
@@ -72,6 +75,31 @@ uint32_t alloc_inum(){
   }
   imap.set(idx);
   return idx;
+}
+
+int init_inode(const char* name ,uint32_t inum, INODE_TYPE type){
+  memset(&inodes[inum], 0, sizeof(struct inode));
+  inodes[inum].i_type = type;
+  inodes[inum].i_blocks = 0;
+  inodes[inum].i_size = 0;
+  inodes[inum].i_number = inum;
+  inodes[inum].i_nlink = 1;
+  inodes[inum].i_uid = getuid();
+  inodes[inum].i_gid = getgid();
+  inodes[inum].i_name = name;
+
+  return 0;
+}
+
+void print_inode(uint32_t inum){
+  std::cout<<"i_name: "     << inodes[inum].i_name   << std::endl
+           <<"i_uid: "        << inodes[inum].i_uid    << std::endl
+           <<"i_gid: "        << inodes[inum].i_gid    << std::endl
+           <<"i_nlink: "      << inodes[inum].i_nlink  << std::endl
+           <<"i_number: "     << inodes[inum].i_number << std::endl
+           <<"i_type: "       << inodes[inum].i_type   << std::endl
+           <<"i_size: "       << inodes[inum].i_size   << std::endl
+           <<"i_blocks: "     << inodes[inum].i_blocks << std::endl;
 }
 
 // Functions
@@ -102,15 +130,19 @@ static int op_mknod(const char *path, mode_t mode, dev_t rdev) {
   std::cout << "Making inode: " << path << std::endl;
   // Find parent dir first
   std::vector<std::string> splited_path = split_path(path);
-  for(auto name: splited_path)
-  {
-	  std::cout<<name<<"'s parent is at inode: "<<find_inum(name.c_str())<<std::endl;
-  }
-
+  //for(auto name: splited_path)
+  //{
+  //  if(find_inum(name.c_str()) != -1)
+	//  std::cout<<name<<" is at inode: "<<find_inum(name.c_str())<<std::endl;
+  //}
+  std::cout<<"Before alloc"<<std::endl;
   // Init a new inode as a regular file
   // Get a inode num first
   int i_num = alloc_inum();
   std::cout<< imap.to_string()<<std::endl;
+  // Init the relative inode to the inum
+  init_inode(splited_path.back().c_str(), i_num, IFREG);
+  print_inode(i_num);
   // inject the inode into its parent
   return 0;
 }
@@ -119,8 +151,17 @@ static int op_mkdir(const char *path, mode_t mode) {
   std::cout << "Making dir: " << path << std::endl;
   // Find parent dir first
   std::vector<std::string> splited_path = split_path(path);
-  std::cout<< "Parent is: " << splited_path.back() <<" at "<< find_inum(splited_path.back().c_str()) << std::endl;
+  auto parent = splited_path.rbegin();
+  ++parent;
+  std::cout<<parent->c_str()<<std::endl;
+  std::cout<< splited_path.back() << "'s parent is: "  <<" at "<< find_inum(parent->c_str()) << std::endl;
   // Init a new inode as a dir
+  // Get a inode num first
+  int i_num = alloc_inum();
+  std::cout<< imap.to_string()<<std::endl;
+  // Init the relative inode to the inum
+  init_inode(splited_path.back().c_str(), i_num, IFDIR);
+  print_inode(i_num);
   // Inject the inode into its parent
   return 0;
 }
