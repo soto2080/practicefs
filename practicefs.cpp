@@ -1,6 +1,6 @@
 /** @file
  * practicefs.cpp
- * A trial to mimic the legend EXT2 filesystem architecture in cpp
+ * A trial to use the Linux virtual filesystem architecture in cpp
  * Copyright (C) 2020  Ming-Han Yang <mhy@mumi.rip>
  */
 
@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <iostream>
 #include <iterator>
+#include <ostream>
 #include <queue>
 #include <string.h>
 #include <string>
@@ -26,7 +27,7 @@ struct inode inodes[IMAP_SIZE];
 
 // Helpers
 
-// Split the full string into small pieces
+// Split the full string into small pieces till last /
 std::vector<std::string> split_path(const char *path) {
   std::string str(path);
   std::vector<std::string> ancestor;
@@ -49,27 +50,65 @@ std::vector<std::string> split_path(const char *path) {
   }
   
   // Debug logging
-  for (auto x : ancestor) {
-    std::cout << x << std::endl;
-  }
+  //for (auto x : ancestor) {
+  //  std::cout << x << std::endl;
+  //}
   return ancestor;
 }
 
-// Find inode number by name
-size_t find_inum(std::string name)
-{
-  // It's broken
-  size_t idx = 0;
-	while(idx < IMAP_SIZE){
-    if( imap.test(idx) && *inodes[idx].i_name == name)
-      return idx;
+std::string split_filename(const char *path){
+  std::string tmp(path);
+  std::size_t found = tmp.find_last_of("/");
+  return tmp.substr(found+1);
+}
+
+// find specify name's inode in splted path from specift parent inode
+size_t find_inum_helper(std::vector<std::string> splited_path, size_t pnum, size_t idx){
+  size_t inum = 0;
+  if(!inodes[pnum].entries.size())
+    return 0;
+  //std::cout<< pnum <<"before loop"<< inodes[pnum].entries.size()<< " depth: " <<idx<< std::endl;
+
+  for(auto entry : inodes[pnum].entries){
+    if(entry->name == splited_path[idx]){
+      inum = entry->inode_num;
+      //std::cout<<"Gotcha: "<<inum<<std::endl;
+    }
   }
-	return -1;
+  return inum;
+}
+
+// Find inode number by path
+size_t find_inum(std::vector<std::string> splited_path)
+{
+  // finding inode from root inum, so bypass "/"
+  size_t idx = 1;
+  size_t inum = root_inode_num;
+
+  if(splited_path.size() == 1)      // only "/", it's root , so inum == 2
+    return root_inode_num;
+
+  if(!inodes[inum].entries.size()){
+    return 0;
+  }
+  
+  while(idx < splited_path.size() && inodes[inum].entries.size()){
+    inum = find_inum_helper(splited_path, inum, idx);
+    //std::cout <<" tmp inum: "<< inum << std::endl;
+    if(!inum)
+      return 0;
+    ++idx;
+  }
+  //std::cout <<"inum: "<< inum << std::endl;
+  if(idx == splited_path.size())
+    return inum;
+  return 0;
 }
 
 // Allocate an inode number for new inode
 size_t alloc_inum(){
-  size_t idx = 0;
+  // Reserving the first two inum
+  size_t idx = root_inode_num;
   while(idx < imap.size() && imap.test(idx))
   {
     ++idx;
@@ -78,7 +117,10 @@ size_t alloc_inum(){
   return idx;
 }
 
-int init_inode(std::string& name ,size_t inum, size_t parent, INODE_TYPE type){
+int init_inode(std::string name ,size_t inum, size_t parent, INODE_TYPE type){
+  struct timespec now;
+	timespec_get(&now, TIME_UTC);
+
   memset(&inodes[inum], 0, sizeof(struct inode));
   inodes[inum].i_type = type;
   inodes[inum].i_blocks = 0;
@@ -89,14 +131,18 @@ int init_inode(std::string& name ,size_t inum, size_t parent, INODE_TYPE type){
   inodes[inum].i_uid = getuid();
   inodes[inum].i_gid = getgid();
   inodes[inum].i_name = &name;
+  inodes[inum].ATIME = now;
+  inodes[inum].CTIME = now;
+  inodes[inum].MTIME = now;
 
-  // inject the inode into its parent
-  struct directory_entry entry;
-  entry.inode_num = inum;
-  entry.name = &name;
-  inodes[parent].entries->push_back(entry);
-  
-  return 0;
+  // inject the inode into its parent's dir list
+  if(inodes[parent].i_type == IFDIR){
+    inodes[parent].entries.push_back(new directory_entry(inum,name));
+    inodes[parent].CTIME = now;
+    return 0;
+  }
+   //TODO: deallocate the inode
+  return -1;
 }
 
 void print_inode(size_t inum){
@@ -115,19 +161,27 @@ void print_inode(size_t inum){
 static int op_getattr(const char *path, struct stat *st,
                       struct fuse_file_info *info) {
   std::cout << "Geting attr: " << path << std::endl;
+
+  // get the relative inode
+  std::vector<std::string> splited_path = split_path(path);
+  size_t inum = find_inum(splited_path);
+
   memset(st, 0, sizeof(struct stat));
-  st->st_uid = getuid(); // The owner of the file/directory is the user who
-                         // mounted the filesystem
-  st->st_gid = getgid(); // The group of the file/directory is the same as the
-                         // group of the user who mounted the filesystem
-  if (strcmp(path, "/") == 0) {
-    st->st_uid = inodes[root_inode_num].i_uid;
-    st->st_gid = inodes[root_inode_num].i_gid;
-    st->st_mode = S_IFDIR | 0755;
-    st->st_nlink =
-        inodes[root_inode_num]
-            .i_nlink; // Why "two" hardlinks instead of "one"? The answer is
-                      // here: http://unix.stackexchange.com/a/101536
+
+  if (inum && imap.test(inum)) {
+    st->st_ino = inodes[inum].i_number;
+    st->st_uid = inodes[inum].i_uid;
+    st->st_gid = inodes[inum].i_gid;
+    if(inodes[inum].i_type == IFDIR){
+      st->st_mode = S_IFDIR | 0755;
+    }else{
+      st->st_mode = S_IFREG | 0644;
+    }
+    st->st_nlink =inodes[inum].i_nlink;
+    st->st_size = inodes[inum].i_size;
+    st->st_atim = inodes[inum].ATIME;
+    st->st_mtim = inodes[inum].MTIME;
+    st->st_ctim = inodes[inum].CTIME;
   } else {
     return -ENOENT;
   }
@@ -139,15 +193,16 @@ static int op_mknod(const char *path, mode_t mode, dev_t rdev) {
   std::cout << "Making inode: " << path << std::endl;
   // Find parent dir first
   std::vector<std::string> splited_path = split_path(path);
-  uint32_t parent = 0;
+  splited_path.erase(splited_path.end());
+  size_t parent = find_inum(splited_path);
 
   // Init a new inode as a regular file
   // Get a inode num first
-  int i_num = alloc_inum();
+  size_t i_num = alloc_inum();
 
   // Init the new inode to the inum
-  init_inode(splited_path.back(), i_num, parent, IFREG);
-  print_inode(i_num);
+  init_inode(split_filename(path), i_num, parent, IFREG);
+  // print_inode(i_num);
   return 0;
 }
 
@@ -155,15 +210,17 @@ static int op_mkdir(const char *path, mode_t mode) {
   std::cout << "Making dir: " << path << std::endl;
   // Find parent dir first
   std::vector<std::string> splited_path = split_path(path);
-  uint32_t parent = 0;
+  splited_path.erase(splited_path.end());
+  size_t parent = find_inum(splited_path);
 
-  // Init a new inode as a regular file
+  // Init a new inode as a dir
+
   // Get a inode num first
-  int i_num = alloc_inum();
+  size_t i_num = alloc_inum();
 
   // Init the new inode to the inum
-  init_inode(splited_path.back(), i_num, parent, IFDIR);
-  print_inode(i_num);
+  init_inode(split_filename(path), i_num, parent, IFDIR);
+  //print_inode(i_num);
   return 0;
 }
 
@@ -196,12 +253,31 @@ static int op_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 
   filler(buffer, ".", NULL, 0, FUSE_FILL_DIR_PLUS);  // Current Directory
   filler(buffer, "..", NULL, 0, FUSE_FILL_DIR_PLUS); // Parent Directory
-  if ( strcmp( path, "/" ) == 0 ) // If the user is trying to show the files/directories of the root directory show the following
-	{
-		for(auto entry: *inodes[0].entries)
-			filler( buffer, entry.name->c_str(), NULL, 0 ,FUSE_FILL_DIR_PLUS);
-	}
-  return 0;
+  // Todo: add read dir support for any path
+  //if ( strcmp( path, "/" ) == 0 ) // If the user is trying to show the files/directories of the root directory show the following
+	//{ 
+  //  if(inodes[root_inode_num].entries.size())
+  //    for(auto entry: inodes[root_inode_num].entries){
+  //      std::cout<<entry->name<<std::endl;
+  //      filler( buffer, entry->name.c_str(), NULL, 0 ,FUSE_FILL_DIR_PLUS);
+  //    }
+	//}
+
+  std::vector<std::string> splited_path = split_path(path);
+  size_t inum = find_inum(splited_path);
+  
+  if(inodes[inum].i_type == IFDIR){
+  
+    for(auto entry : inodes[inum].entries){
+      //std::cout<<entry->name<<std::endl;
+      filler(buffer, entry->name.c_str(), NULL, 0, FUSE_FILL_DIR_PLUS);
+    }
+    return 0;
+  }
+
+  // Not a dir
+  return -1;
+  
 }
 
 void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
@@ -229,6 +305,12 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
   inodes[root_inode_num].i_uid = getuid();
   inodes[root_inode_num].i_gid = getgid();
   inodes[root_inode_num].i_type = IFDIR;
+
+  struct timespec now;
+	timespec_get(&now, TIME_UTC);
+  inodes[root_inode_num].ATIME = now;
+  inodes[root_inode_num].CTIME = now;
+  inodes[root_inode_num].MTIME = now;
 
   inodes[root_inode_num].i_block[0] = &blocks[0];
   std::cout << "Init Root Inode:" << *inodes[root_inode_num].i_name << std::endl;

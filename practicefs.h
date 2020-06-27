@@ -1,6 +1,7 @@
 #ifndef PRACTICEFS
 
 #define PRACTICEFS
+#include <cstddef>
 #include <string>
 #include <vector>
 #define FUSE_USE_VERSION 31
@@ -27,10 +28,26 @@ struct datablock {
     char data[BLK_SIZE];
 };
 
+
+/*
+Others:
+*/
+class directory_entry {
+public:
+  directory_entry(size_t inum, std::string name){
+      this->inode_num = inum;
+      this->name = name;
+  }
+  directory_entry(){
+  }
+  size_t inode_num;
+  std::string name;
+};
+
 /*
 SuperBlock:
 */
-const int root_inode_num = 0;
+const int root_inode_num = 2;
 struct superblock {
     size_t imap_size;
     size_t dmap_size;
@@ -76,22 +93,16 @@ struct inode {
 	size_t	    i_blocks;	/* Blocks actually held. */
     size_t        i_number;   /* The identity of the inode. */
     size_t        i_parent;   /* The parent of the inode. */
-    union{
-        struct datablock  *i_block[EXT2_N_BLOCKS]; /* pointer to datablock */
-        std::vector<struct directory_entry> *entries; /* pointer to dir content list */
-    };
+
+    struct datablock  *i_block[EXT2_N_BLOCKS]; /* pointer to datablock */
+    std::vector<directory_entry *> entries; /* pointer to dir content list */
+
+    struct timespec ATIME;
+    struct timespec CTIME;
+    struct timespec MTIME;
     // Time Related
 };
 
 
-/*
-Others:
-*/
-
-
-struct directory_entry {
-  size_t inode_num;
-  std::string *name;
-};
 
 #endif
