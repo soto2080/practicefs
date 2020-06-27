@@ -138,6 +138,8 @@ int init_inode(std::string name ,size_t inum, size_t parent, INODE_TYPE type){
 
   // inject the inode into its parent's dir list
   if(inodes[parent].i_type == IFDIR){
+    // a new child dir add a link to its parent to itself
+    ++inodes[parent].i_nlink;
     inodes[parent].entries.push_back(new directory_entry(inum,name));
     inodes[parent].CTIME = now;
     return 0;
