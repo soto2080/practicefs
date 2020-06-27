@@ -15,6 +15,7 @@
 #include <string.h>
 #include <string>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 #include <vector>
 
@@ -323,6 +324,21 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
 static int op_utimens(const char *path, const struct timespec tv[2],
                       struct fuse_file_info *info) {
   std::cout << "Setting time: " << path << std::endl;
+
+  // Find target inum
+  std::vector<std::string> splited_path = split_path(path);
+  size_t inum = find_inum(splited_path);
+
+  // Get the 
+  struct timespec now;
+	timespec_get(&now, TIME_UTC);
+
+  // Workaround, the timespec give wrong time
+  inodes[inum].ATIME = now;
+  inodes[inum].CTIME = now;
+
+  //inodes[inum].ATIME = tv[0];
+  //inodes[inum].CTIME = tv[1];
   return 0;
 }
 // VFS Operations
