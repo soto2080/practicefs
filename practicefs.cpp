@@ -5,6 +5,7 @@
  */
 
 #include "practicefs.h"
+#include <algorithm>
 #include <bits/stdint-uintn.h>
 #include <bitset>
 #include <cstddef>
@@ -38,126 +39,174 @@ std::vector<std::string> split_path(const char *path) {
   std::string name;
   auto end = str.find('/');
   while (end != std::string::npos) {
-    
-	if (str.substr(pos, end - pos).length() > 0) {
-  		ancestor.push_back(str.substr(pos, end - pos));
+    if (str.substr(pos, end - pos).length() > 0) {
+      ancestor.push_back(str.substr(pos, end - pos));
     }
     pos = end + 1;
     end = str.find('/', pos);
   }
 
   if (str.substr(pos, end).length() > 0) {
-  	ancestor.push_back(str.substr(pos, end));
+    ancestor.push_back(str.substr(pos, end));
   }
-  
+
   // Debug logging
-  //for (auto x : ancestor) {
+  // for (auto x : ancestor) {
   //  std::cout << x << std::endl;
   //}
   return ancestor;
 }
 
-std::string split_filename(const char *path){
+std::string split_filename(const char *path) {
   std::string tmp(path);
   std::size_t found = tmp.find_last_of("/");
-  return tmp.substr(found+1);
+  return tmp.substr(found + 1);
 }
 
 // find specify name's inode in splted path from specift parent inode
-size_t find_inum_helper(std::vector<std::string> splited_path, size_t pnum, size_t idx){
+size_t find_inum_helper(std::vector<std::string> splited_path, size_t pnum,
+                        size_t idx) {
   size_t inum = 0;
-  if(!inodes[pnum].entries.size())
+  if (!inodes[pnum].entries.size())
     return 0;
-  //std::cout<< pnum <<"before loop"<< inodes[pnum].entries.size()<< " depth: " <<idx<< std::endl;
+  // std::cout<< pnum <<"before loop"<< inodes[pnum].entries.size()<< " depth: "
+  // <<idx<< std::endl;
 
-  for(auto entry : inodes[pnum].entries){
-    if(entry->name == splited_path[idx]){
+  for (auto entry : inodes[pnum].entries) {
+    if (entry->name == splited_path[idx]) {
       inum = entry->inode_num;
-      //std::cout<<"Gotcha: "<<inum<<std::endl;
+      // std::cout<<"Gotcha: "<<inum<<std::endl;
     }
   }
   return inum;
 }
 
 // Find inode number by path
-size_t find_inum(std::vector<std::string> splited_path)
-{
+size_t find_inum(std::vector<std::string> splited_path) {
   // finding inode from root inum, so bypass "/"
   size_t idx = 1;
   size_t inum = root_inode_num;
 
-  if(splited_path.size() == 1)      // only "/", it's root , so inum == 2
+  if (splited_path.size() == 1) // only "/", it's root , so inum == 2
     return root_inode_num;
 
-  if(!inodes[inum].entries.size()){
+  if (!inodes[inum].entries.size()) {
     return 0;
   }
-  
-  while(idx < splited_path.size() && inodes[inum].entries.size()){
+
+  while (idx < splited_path.size() && inodes[inum].entries.size()) {
     inum = find_inum_helper(splited_path, inum, idx);
-    //std::cout <<" tmp inum: "<< inum << std::endl;
-    if(!inum)
+    // std::cout <<" tmp inum: "<< inum << std::endl;
+    if (!inum)
       return 0;
     ++idx;
   }
-  //std::cout <<"inum: "<< inum << std::endl;
-  if(idx == splited_path.size())
+  // std::cout <<"inum: "<< inum << std::endl;
+  if (idx == splited_path.size())
     return inum;
   return 0;
 }
 
 // Allocate an inode number for new inode
-size_t alloc_inum(){
+size_t alloc_inum() {
   // Reserving the first two inum
   size_t idx = root_inode_num;
-  while(idx < imap.size() && imap.test(idx))
-  {
+  while (idx < imap.size() && imap.test(idx)) {
     ++idx;
   }
   imap.set(idx);
   return idx;
 }
 
-int init_inode(std::string name ,size_t inum, size_t parent, INODE_TYPE type){
-  struct timespec now;
-	timespec_get(&now, TIME_UTC);
+int init_inode(std::string name, size_t inum, size_t parent, INODE_TYPE type) {
+  if (inodes[parent].i_type == IFDIR) {
+    struct timespec now;
+    timespec_get(&now, TIME_UTC);
 
-  memset(&inodes[inum], 0, sizeof(struct inode));
-  inodes[inum].i_type = type;
-  inodes[inum].i_blocks = 0;
-  inodes[inum].i_size = 0;
-  inodes[inum].i_number = inum;
-  inodes[inum].i_parent = parent;
-  inodes[inum].i_nlink = 1;
-  inodes[inum].i_uid = getuid();
-  inodes[inum].i_gid = getgid();
-  inodes[inum].i_name = &name;
-  inodes[inum].ATIME = now;
-  inodes[inum].CTIME = now;
-  inodes[inum].MTIME = now;
+    memset(&inodes[inum], 0, sizeof(struct inode));
+    inodes[inum].i_type = type;
+    inodes[inum].i_blocks = 0;
+    inodes[inum].i_size = 0;
+    inodes[inum].i_number = inum;
+    inodes[inum].i_parent = parent;
+    inodes[inum].i_uid = getuid();
+    inodes[inum].i_gid = getgid();
+    inodes[inum].i_name = &name;
+    inodes[inum].ATIME = now;
+    inodes[inum].CTIME = now;
+    inodes[inum].MTIME = now;
 
-  // inject the inode into its parent's dir list
-  if(inodes[parent].i_type == IFDIR){
-    // a new child dir add a link to its parent to itself
-    ++inodes[parent].i_nlink;
-    inodes[parent].entries.push_back(new directory_entry(inum,name));
+    if (type == IFDIR) {
+      inodes[inum].i_nlink = 2;
+      // a new child dir add a link to its parent to itself
+      ++inodes[parent].i_nlink;
+    } else {
+      inodes[inum].i_nlink = 1;
+    }
+
+    // inject the inode into its parent's dir list
+    inodes[parent].entries.push_back(new directory_entry(inum, name));
     inodes[parent].CTIME = now;
     return 0;
   }
-   //TODO: deallocate the inode
   return -1;
 }
 
-void print_inode(size_t inum){
-  std::cout<<"i_name: "     << *inodes[inum].i_name   << std::endl
-           <<"i_uid: "        << inodes[inum].i_uid    << std::endl
-           <<"i_gid: "        << inodes[inum].i_gid    << std::endl
-           <<"i_nlink: "      << inodes[inum].i_nlink  << std::endl
-           <<"i_number: "     << inodes[inum].i_number << std::endl
-           <<"i_parent: "     << inodes[inum].i_parent << std::endl
-           <<"i_type: "       << inodes[inum].i_type   << std::endl
-           <<"i_size: "       << inodes[inum].i_size   << std::endl
-           <<"i_blocks: "     << inodes[inum].i_blocks << std::endl;
+void print_inode(size_t inum) {
+  std::cout << "i_name: " << *inodes[inum].i_name << std::endl
+            << "i_uid: " << inodes[inum].i_uid << std::endl
+            << "i_gid: " << inodes[inum].i_gid << std::endl
+            << "i_nlink: " << inodes[inum].i_nlink << std::endl
+            << "i_number: " << inodes[inum].i_number << std::endl
+            << "i_parent: " << inodes[inum].i_parent << std::endl
+            << "i_type: " << inodes[inum].i_type << std::endl
+            << "i_size: " << inodes[inum].i_size << std::endl
+            << "i_blocks: " << inodes[inum].i_blocks << std::endl;
+}
+
+int rm_inode(std::string path) {
+  std::vector<std::string> splited_path = split_path(path.c_str());
+  size_t inum = find_inum(splited_path);
+
+  std::cout << path << " tpye: " << inodes[inum].i_type
+            << " nlink: " << inodes[inum].i_nlink
+            << " nentry: " << inodes[inum].entries.size() << std::endl;
+
+  bool is_safe = false;
+  if (inodes[inum].i_type == IFREG && inodes[inum].i_nlink == 1) {
+    is_safe = true;
+  } else if (inodes[inum].i_type == IFDIR && inodes[inum].i_nlink == 2) {
+    is_safe = true;
+  }
+  if (inodes[inum].i_type == IFDIR && inodes[inum].entries.size()) {
+    std::cout << "Error: dir " << path << " is not empty" << std::endl;
+    return -1;
+  }
+
+  if (!is_safe)
+    return -1;
+
+  // Remove the inode from parent
+  size_t parent = inodes[inum].i_parent;
+  inodes[parent].entries.erase(
+      std::remove_if(inodes[parent].entries.begin(),
+                     inodes[parent].entries.end(),
+                     [&](directory_entry *entry) -> bool {
+                       return entry->inode_num == inum;
+                     }),
+      inodes[parent].entries.end());
+  // Dec parent's nlink when removing dir
+  if (inodes[inum].i_type == IFDIR) {
+    --inodes[parent].i_nlink;
+  }
+
+  // Reset inode map and memset the struct
+  if (imap.test(inum)) {
+    imap.reset(inum);
+    memset(&inodes[inum], 0, sizeof(struct inode));
+  }
+
+  return 0;
 }
 
 // Functions
@@ -175,12 +224,12 @@ static int op_getattr(const char *path, struct stat *st,
     st->st_ino = inodes[inum].i_number;
     st->st_uid = inodes[inum].i_uid;
     st->st_gid = inodes[inum].i_gid;
-    if(inodes[inum].i_type == IFDIR){
+    if (inodes[inum].i_type == IFDIR) {
       st->st_mode = S_IFDIR | 0755;
-    }else{
+    } else {
       st->st_mode = S_IFREG | 0644;
     }
-    st->st_nlink =inodes[inum].i_nlink;
+    st->st_nlink = inodes[inum].i_nlink;
     st->st_size = inodes[inum].i_size;
     st->st_atim = inodes[inum].ATIME;
     st->st_mtim = inodes[inum].MTIME;
@@ -216,24 +265,26 @@ static int op_mkdir(const char *path, mode_t mode) {
   splited_path.erase(splited_path.end());
   size_t parent = find_inum(splited_path);
 
-  // Init a new inode as a dir
+  /* Init a new inode as a dir */
 
   // Get a inode num first
   size_t i_num = alloc_inum();
 
   // Init the new inode to the inum
   init_inode(split_filename(path), i_num, parent, IFDIR);
-  //print_inode(i_num);
+  // print_inode(i_num);
   return 0;
 }
 
 static int op_unlink(const char *path) {
-  std::cout << "Unlinking inode" << path << " count by 1" << std::endl;
+  std::cout << "Unlinking inode: " << path << std::endl;
+  rm_inode(path);
   return 0;
 }
 
 static int op_rmdir(const char *path) {
   std::cout << "Removing dir: " << path << std::endl;
+  rm_inode(path);
   return 0;
 }
 
@@ -256,23 +307,14 @@ static int op_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 
   filler(buffer, ".", NULL, 0, FUSE_FILL_DIR_PLUS);  // Current Directory
   filler(buffer, "..", NULL, 0, FUSE_FILL_DIR_PLUS); // Parent Directory
-  // Todo: add read dir support for any path
-  //if ( strcmp( path, "/" ) == 0 ) // If the user is trying to show the files/directories of the root directory show the following
-	//{ 
-  //  if(inodes[root_inode_num].entries.size())
-  //    for(auto entry: inodes[root_inode_num].entries){
-  //      std::cout<<entry->name<<std::endl;
-  //      filler( buffer, entry->name.c_str(), NULL, 0 ,FUSE_FILL_DIR_PLUS);
-  //    }
-	//}
 
   std::vector<std::string> splited_path = split_path(path);
   size_t inum = find_inum(splited_path);
-  
-  if(inodes[inum].i_type == IFDIR){
-  
-    for(auto entry : inodes[inum].entries){
-      //std::cout<<entry->name<<std::endl;
+
+  if (inodes[inum].i_type == IFDIR) {
+
+    for (auto entry : inodes[inum].entries) {
+      // std::cout<<entry->name<<std::endl;
       filler(buffer, entry->name.c_str(), NULL, 0, FUSE_FILL_DIR_PLUS);
     }
     return 0;
@@ -280,7 +322,6 @@ static int op_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 
   // Not a dir
   return -1;
-  
 }
 
 void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
@@ -310,13 +351,14 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
   inodes[root_inode_num].i_type = IFDIR;
 
   struct timespec now;
-	timespec_get(&now, TIME_UTC);
+  timespec_get(&now, TIME_UTC);
   inodes[root_inode_num].ATIME = now;
   inodes[root_inode_num].CTIME = now;
   inodes[root_inode_num].MTIME = now;
 
   inodes[root_inode_num].i_block[0] = &blocks[0];
-  std::cout << "Init Root Inode:" << *inodes[root_inode_num].i_name << std::endl;
+  std::cout << "Init Root Inode:" << *inodes[root_inode_num].i_name
+            << std::endl;
 
   // memset(blocks, 0, sizeof(blocks) * sb.dmap_size);
   // memset(inodes, 0, sizeof(inodes) * sb.imap_size);
@@ -331,16 +373,16 @@ static int op_utimens(const char *path, const struct timespec tv[2],
   std::vector<std::string> splited_path = split_path(path);
   size_t inum = find_inum(splited_path);
 
-  // Get the 
+  // Get the
   struct timespec now;
-	timespec_get(&now, TIME_UTC);
+  timespec_get(&now, TIME_UTC);
 
   // Workaround, the timespec give wrong time
   inodes[inum].ATIME = now;
   inodes[inum].CTIME = now;
 
-  //inodes[inum].ATIME = tv[0];
-  //inodes[inum].CTIME = tv[1];
+  // inodes[inum].ATIME = tv[0];
+  // inodes[inum].CTIME = tv[1];
   return 0;
 }
 // VFS Operations
