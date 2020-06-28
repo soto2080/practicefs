@@ -43,6 +43,11 @@ public:
   std::string name;
 };
 
+class indirect_offset{
+public:
+    size_t table [ BLK_SIZE / sizeof(size_t) ];
+};
+
 /*
 SuperBlock:
 */
