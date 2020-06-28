@@ -9,6 +9,7 @@
 #include <bits/stdint-uintn.h>
 #include <bitset>
 #include <cstddef>
+#include <cstdlib>
 #include <iostream>
 #include <iterator>
 #include <ostream>
@@ -24,8 +25,9 @@
 struct superblock sb;
 std::bitset<IMAP_SIZE> imap(0);
 std::bitset<DMAP_SIZE> dmap(0);
-struct datablock blocks[DMAP_SIZE];
-struct inode inodes[IMAP_SIZE];
+// struct datablock blocks[DMAP_SIZE];
+static char *blocks;
+static struct inode inodes[IMAP_SIZE];
 
 // Helpers
 
@@ -200,6 +202,8 @@ int rm_inode(std::string path) {
     --inodes[parent].i_nlink;
   }
 
+  // TODO: deallocate datablocks
+
   // Reset inode map and memset the struct
   if (imap.test(inum)) {
     imap.reset(inum);
@@ -336,7 +340,6 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
   std::cout << "Init SuperBlock" << std::endl;
 
   imap.set(root_inode_num);
-  dmap.set(0);
 
   inodes[root_inode_num].i_number = root_inode_num;
   inodes[root_inode_num].i_blocks = 1;
@@ -355,12 +358,11 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
   inodes[root_inode_num].ATIME = now;
   inodes[root_inode_num].CTIME = now;
   inodes[root_inode_num].MTIME = now;
-
-  inodes[root_inode_num].i_block[0] = &blocks[0];
+  
   std::cout << "Init Root Inode:" << *inodes[root_inode_num].i_name
             << std::endl;
 
-  // memset(blocks, 0, sizeof(blocks) * sb.dmap_size);
+  blocks = (char *)malloc(sb.blk_size * sb.dmap_size);
   // memset(inodes, 0, sizeof(inodes) * sb.imap_size);
   return nullptr;
 }
