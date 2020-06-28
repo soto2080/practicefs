@@ -152,7 +152,7 @@ int init_inode(std::string name, size_t inum, size_t parent, INODE_TYPE type) {
     inodes[inum].i_ctim = now;
     inodes[inum].i_mtim = now;
 
-    memset(inodes[inum].i_block, 0 , sizeof(size_t)* EXT2_N_BLOCKS);
+    memset(inodes[inum].i_block, 0, sizeof(size_t) * EXT2_N_BLOCKS);
 
     if (type == IFDIR) {
       inodes[inum].i_nlink = 2;
@@ -242,7 +242,7 @@ std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt) {
     inodes[inum].i_block[i] = offset;
     dblk.push_back(offset);
   }
-  std::cout << "Size1:" << dblk.size() << std::endl;
+  //std::cout << "Size1:" << dblk.size() << std::endl;
 
   // using single indirect offset table then
   size_t offset_in = alloc_dblk();
@@ -256,7 +256,7 @@ std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt) {
   }
   memcpy(blocks + offset_in * sb.blk_size, set, sb.blk_size);
   delete set;
-  std::cout << "Size2:" << dblk.size() << std::endl;
+  //std::cout << "Size2:" << dblk.size() << std::endl;
 
   // using double indirect offset table when needed
   // layer-1 table
@@ -283,7 +283,7 @@ std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt) {
   memcpy(blocks + offset_out * sb.blk_size, set2, sb.blk_size);
   delete set2;
 
-  std::cout << "Size3:" << dblk.size() << std::endl;
+  //std::cout << "Size3:" << dblk.size() << std::endl;
   // using triple indirect offset table finallly
   //  這樣下去會死的
   // for(int i = 0; cnt && i < num_per_indir*num_per_indir*num_per_indir ;
@@ -372,10 +372,12 @@ static int op_getattr(const char *path, struct stat *st,
       st->st_mode = S_IFREG | 0644;
     }
     st->st_nlink = inodes[inum].i_nlink;
+    st->st_blocks = inodes[inum].i_blocks;
     st->st_size = inodes[inum].i_size;
     st->st_atim = inodes[inum].i_atim;
     st->st_mtim = inodes[inum].i_mtim;
     st->st_ctim = inodes[inum].i_ctim;
+    st->st_blksize = sb.blk_size;
   } else {
     return -ENOENT;
   }
