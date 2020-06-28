@@ -22,6 +22,22 @@
 #include <unistd.h>
 #include <vector>
 
+// Declare helpers
+std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt);
+std::vector<std::string> split_path(const char *path);
+std::string split_filename(const char *path);
+size_t find_inum_helper(std::vector<std::string> splited_path, size_t pnum,
+                        size_t idx);
+size_t alloc_inum();
+size_t alloc_dblk();
+int init_inode(std::string name, size_t inum, size_t parent, INODE_TYPE type);
+void print_inode(size_t inum);
+int rm_inode(std::string path);
+std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt);
+std::vector<size_t> get_offset(size_t inum);
+int write(size_t inum, const char *buffer, size_t size);
+int read(size_t inum, char *buffer, size_t size);
+
 // Global variables
 struct superblock sb;
 std::bitset<IMAP_SIZE> imap(0);
@@ -127,8 +143,8 @@ size_t alloc_inum() {
 
 // Find one free datablock index
 size_t alloc_dblk() {
-  // All idx are available
-  size_t idx = 0;
+  // Reserving the first and second block
+  size_t idx = 2;
   while (idx < dmap.size() && dmap.test(idx)) {
     ++idx;
   }
@@ -221,8 +237,29 @@ int rm_inode(std::string path) {
     --inodes[parent].i_nlink;
   }
 
-  // TODO: deallocate datablocks
+  // Deallocate datablocks if it's a reg file
+  if (inodes[inum].i_type == IFREG) {
+    std::vector<size_t> dblk = get_offset(inum);
 
+    size_t offset = inodes[inum].i_block[EXT2_IND_BLOCK];
+    if (offset != 0) {
+      dblk.push_back(offset);
+    }
+    offset = inodes[inum].i_block[EXT2_DIND_BLOCK];
+    if (offset != 0) {
+      dblk.push_back(offset);
+    }
+    offset = inodes[inum].i_block[EXT2_TIND_BLOCK];
+    if (offset != 0) {
+      dblk.push_back(offset);
+    }
+
+    for (auto offset : dblk) {
+      dmap.reset(offset);
+      ++sb.num_free_dblk;
+      memset(blocks + offset * sb.blk_size, 0, sb.blk_size);
+    }
+  }
   // Reset inode map, inc the free inode counter and memset the struct
   if (imap.test(inum)) {
     imap.reset(inum);
@@ -247,65 +284,57 @@ std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt) {
   }
   //std::cout << "Size1:" << dblk.size() << std::endl;
 
-  // using single indirect offset table then
-  size_t offset_in = alloc_dblk();
-  inodes[inum].i_block[EXT2_IND_BLOCK] = offset_in;
-
-  indirect_offset *set = new indirect_offset;
-  for (int i = 0; cnt && i < num_per_indir; ++i, --cnt) {
-    size_t offset = alloc_dblk();
-    set->table[i] = offset;
-    dblk.push_back(offset);
-  }
-  memcpy(blocks + offset_in * sb.blk_size, set, sb.blk_size);
-  delete set;
-  //std::cout << "Size2:" << dblk.size() << std::endl;
-
-  // using double indirect offset table when needed
-  // layer-1 table
-  size_t offset_out = alloc_dblk();
-  inodes[inum].i_block[EXT2_DIND_BLOCK] = offset_out;
-  indirect_offset *set2 = new indirect_offset;
-
-  for (int j = 0; cnt && j < num_per_indir; ++j, --cnt) {
-    // layer-2 table
+  if (cnt) {
+    // using single indirect offset table then
     size_t offset_in = alloc_dblk();
-    indirect_offset *set = new indirect_offset;
-    set2->table[j] = offset_in;
+    inodes[inum].i_block[EXT2_IND_BLOCK] = offset_in;
 
+    indirect_offset *set = new indirect_offset;
     for (int i = 0; cnt && i < num_per_indir; ++i, --cnt) {
       size_t offset = alloc_dblk();
       set->table[i] = offset;
       dblk.push_back(offset);
     }
-    // save the layer-2 table
     memcpy(blocks + offset_in * sb.blk_size, set, sb.blk_size);
     delete set;
+  //  std::cout << "Size2:" << dblk.size() << std::endl;
   }
-  // save the layer-1 table
-  memcpy(blocks + offset_out * sb.blk_size, set2, sb.blk_size);
-  delete set2;
-  //std::cout << "Size3:" << dblk.size() << std::endl;
+  if (cnt) {
+    // using double indirect offset table when needed
+    // layer-1 table
+    size_t offset_out = alloc_dblk();
+    inodes[inum].i_block[EXT2_DIND_BLOCK] = offset_out;
+    indirect_offset *set2 = new indirect_offset;
 
+    for (int j = 0; cnt && j < num_per_indir; ++j, --cnt) {
+      // layer-2 table
+      size_t offset_in = alloc_dblk();
+      indirect_offset *set = new indirect_offset;
+      set2->table[j] = offset_in;
+
+      for (int i = 0; cnt && i < num_per_indir; ++i, --cnt) {
+        size_t offset = alloc_dblk();
+        set->table[i] = offset;
+        dblk.push_back(offset);
+      }
+      // save the layer-2 table
+      memcpy(blocks + offset_in * sb.blk_size, set, sb.blk_size);
+      delete set;
+    }
+    // save the layer-1 table
+    memcpy(blocks + offset_out * sb.blk_size, set2, sb.blk_size);
+    delete set2;
+  //  std::cout << "Size3:" << dblk.size() << std::endl;
+  }
   /*TODO: fix triple indirect offset*/
 
-
-  // using triple indirect offset table finallly
-  //  這樣下去會死的
-  // for(int i = 0; cnt && i < num_per_indir*num_per_indir*num_per_indir ;
-  // ++i,--cnt){
-  //  size_t offset = alloc_dblk();
-  //  dblk.push_back(offset);
-  //}
-  //std::cout<<"Size4:"<<dblk.size()<<std::endl;
-  
-  // A testing cache
+  // A cache
   blk_cache = dblk;
 
   return dblk;
 }
 
-std::vector<size_t> get_offset(size_t inum){
+std::vector<size_t> get_offset(size_t inum) {
   std::vector<size_t> dblk;
 
   size_t cnt = inodes[inum].i_blocks;
@@ -319,41 +348,46 @@ std::vector<size_t> get_offset(size_t inum){
   }
   //std::cout << "Size1:" << dblk.size() << std::endl;
 
-  // using single indirect offset table then
-  size_t offset = inodes[inum].i_block[EXT2_IND_BLOCK];
+  if (cnt) {
+    // using single indirect offset table then
+    size_t offset = inodes[inum].i_block[EXT2_IND_BLOCK];
 
-  indirect_offset *set = new indirect_offset;
-  memcpy(set, blocks + offset * sb.blk_size, sb.blk_size);
-  
-  for (int i = 0; cnt && i < num_per_indir; ++i, --cnt) {
-    dblk.push_back(set->table[i]);
-  }
-
-  delete set;
-  //std::cout << "Size2:" << dblk.size() << std::endl;
-
-  // using double indirect offset table when needed
-  // layer-1 table
-  size_t offset_out = inodes[inum].i_block[EXT2_DIND_BLOCK];
-  indirect_offset *set2 = new indirect_offset;
-  // restore the layer-1 table
-  memcpy(set2, blocks + offset_out * sb.blk_size, sb.blk_size);
-
-  for (int j = 0; cnt && j < num_per_indir; ++j, --cnt) {
-    // layer-2 table
-    size_t offset_in = set2->table[j];
     indirect_offset *set = new indirect_offset;
-    // restore the layer-2 table
-    memcpy(set, blocks + offset_in * sb.blk_size, sb.blk_size);
+    memcpy(set, blocks + offset * sb.blk_size, sb.blk_size);
 
     for (int i = 0; cnt && i < num_per_indir; ++i, --cnt) {
       dblk.push_back(set->table[i]);
     }
-    
+
     delete set;
+  //  std::cout << "Size2:" << dblk.size() << std::endl;
   }
-  delete set2;
-  //std::cout << "Size3:" << dblk.size() << std::endl;
+
+  if (cnt) {
+    // using double indirect offset table when needed
+    // layer-1 table
+    size_t offset_out = inodes[inum].i_block[EXT2_DIND_BLOCK];
+    indirect_offset *set2 = new indirect_offset;
+    // restore the layer-1 table
+    memcpy(set2, blocks + offset_out * sb.blk_size, sb.blk_size);
+
+    for (int j = 0; cnt && j < num_per_indir; ++j, --cnt) {
+      // layer-2 table
+      size_t offset_in = set2->table[j];
+      indirect_offset *set = new indirect_offset;
+      // restore the layer-2 table
+      memcpy(set, blocks + offset_in * sb.blk_size, sb.blk_size);
+
+      for (int i = 0; cnt && i < num_per_indir; ++i, --cnt) {
+        dblk.push_back(set->table[i]);
+      }
+
+      delete set;
+    }
+    delete set2;
+  //  std::cout << "Size3:" << dblk.size() << std::endl;
+  }
+  /*TODO: fix triple indirect offset*/
 
   // cache
   blk_cache = dblk;
@@ -408,11 +442,11 @@ int read(size_t inum, char *buffer, size_t size) {
   // copy the content
   size_t cnt = 0;
   std::vector<size_t> dblk = get_offset(inum);
-  for(auto offset: dblk){
-    memcpy(buffer + cnt * sb.blk_size , blocks + offset * sb.blk_size, sb.blk_size);
+  for (auto offset : dblk) {
+    memcpy(buffer + cnt * sb.blk_size, blocks + offset * sb.blk_size,
+           sb.blk_size);
     ++cnt;
   }
-  
 
   // modify the inode access time info
   struct timespec now;
