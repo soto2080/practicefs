@@ -7,7 +7,6 @@
 #include "practicefs.h"
 #include <algorithm>
 #include <alloca.h>
-#include <asm-generic/errno-base.h>
 #include <bits/stdint-uintn.h>
 #include <bitset>
 #include <cstddef>
@@ -148,10 +147,12 @@ int init_inode(std::string name, size_t inum, size_t parent, INODE_TYPE type) {
     inodes[inum].i_parent = parent;
     inodes[inum].i_uid = getuid();
     inodes[inum].i_gid = getgid();
-    //inodes[inum].i_name = &name;
+    // inodes[inum].i_name = &name;
     inodes[inum].ATIME = now;
     inodes[inum].CTIME = now;
     inodes[inum].MTIME = now;
+
+    memset(inodes[inum].i_block, 0 , sizeof(size_t)* EXT2_N_BLOCKS);
 
     if (type == IFDIR) {
       inodes[inum].i_nlink = 2;
@@ -171,14 +172,14 @@ int init_inode(std::string name, size_t inum, size_t parent, INODE_TYPE type) {
 
 void print_inode(size_t inum) {
   std::cout //<< "i_name: " << *inodes[inum].i_name << std::endl
-            << "i_uid: " << inodes[inum].i_uid << std::endl
-            << "i_gid: " << inodes[inum].i_gid << std::endl
-            << "i_nlink: " << inodes[inum].i_nlink << std::endl
-            << "i_number: " << inodes[inum].i_number << std::endl
-            << "i_parent: " << inodes[inum].i_parent << std::endl
-            << "i_type: " << inodes[inum].i_type << std::endl
-            << "i_size: " << inodes[inum].i_size << std::endl
-            << "i_blocks: " << inodes[inum].i_blocks << std::endl;
+      << "i_uid: " << inodes[inum].i_uid << std::endl
+      << "i_gid: " << inodes[inum].i_gid << std::endl
+      << "i_nlink: " << inodes[inum].i_nlink << std::endl
+      << "i_number: " << inodes[inum].i_number << std::endl
+      << "i_parent: " << inodes[inum].i_parent << std::endl
+      << "i_type: " << inodes[inum].i_type << std::endl
+      << "i_size: " << inodes[inum].i_size << std::endl
+      << "i_blocks: " << inodes[inum].i_blocks << std::endl;
 }
 
 int rm_inode(std::string path) {
@@ -229,30 +230,102 @@ int rm_inode(std::string path) {
   return 0;
 }
 
+std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt) {
+  std::vector<size_t> dblk;
+
+  // count if we need single indirect offset or even double indirect offset
+  size_t num_per_indir = BLK_SIZE / sizeof(size_t);
+
+  // using direct offset(12 blks) first
+  for (int i = 0; cnt && i < EXT2_NDIR_BLOCKS; ++i, --cnt) {
+    size_t offset = alloc_dblk();
+    inodes[inum].i_block[i] = offset;
+    dblk.push_back(offset);
+  }
+  std::cout << "Size1:" << dblk.size() << std::endl;
+
+  // using single indirect offset table then
+  size_t offset_in = alloc_dblk();
+  inodes[inum].i_block[EXT2_IND_BLOCK] = offset_in;
+
+  indirect_offset *set = new indirect_offset;
+  for (int i = 0; cnt && i < num_per_indir; ++i, --cnt) {
+    size_t offset = alloc_dblk();
+    set->table[i] = offset;
+    dblk.push_back(offset);
+  }
+  memcpy(blocks + offset_in * sb.blk_size, set, sb.blk_size);
+  delete set;
+  std::cout << "Size2:" << dblk.size() << std::endl;
+
+  // using double indirect offset table when needed
+  // layer-1 table
+  size_t offset_out = alloc_dblk();
+  inodes[inum].i_block[EXT2_IND_BLOCK] = offset_in;
+  indirect_offset *set2 = new indirect_offset;
+
+  for (int j = 0; cnt && j < num_per_indir; ++j, --cnt) {
+    // layer-2 table
+    size_t offset_in = alloc_dblk();
+    indirect_offset *set = new indirect_offset;
+    set2->table[j] = offset_in;
+
+    for (int i = 0; cnt && i < num_per_indir; ++i, --cnt) {
+      size_t offset = alloc_dblk();
+      set->table[i] = offset;
+      dblk.push_back(offset);
+    }
+    // save the layer-2 table
+    memcpy(blocks + offset_in * sb.blk_size, set, sb.blk_size);
+    delete set;
+  }
+  // save the layer-1 table
+  memcpy(blocks + offset_out * sb.blk_size, set2, sb.blk_size);
+  delete set2;
+
+  std::cout << "Size3:" << dblk.size() << std::endl;
+  // using triple indirect offset table finallly
+  //  這樣下去會死的
+  // for(int i = 0; cnt && i < num_per_indir*num_per_indir*num_per_indir ;
+  // ++i,--cnt){
+  //  size_t offset = alloc_dblk();
+  //  dblk.push_back(offset);
+  //}
+  // std::cout<<"Size3:"<<dblk.size()<<std::endl;
+  return dblk;
+}
+
 int write(size_t inum, const char *buffer, size_t size) {
-  // Workaround:: ignore the offset
-  // Count necessary number by round up of datablock first
-  size_t blk_count = (size+sb.blk_size-1)/sb.blk_size;
+  // workaround:: ignore the offset
+  // count necessary number by round up of datablock first
+  size_t blk_count = (size + sb.blk_size - 1) / sb.blk_size;
+  size_t num_per_indir = BLK_SIZE / sizeof(size_t);
+  size_t max_count =
+      EXT2_NDIR_BLOCKS + 2 * num_per_indir + num_per_indir * num_per_indir;
 
-  if(blk_count > sb.num_free_dblk)
-    return -E2BIG;
-  
-  // get necessary datablock
-  size_t offset = alloc_dblk();
+  if (blk_count > sb.num_free_dblk || blk_count >= max_count)
+    return -1;
 
-  std::cout << "target inum: " << inum << " target dblock: " << offset
-            << " file size: " << size << std::endl;
+  // get necessary datablock and copy in mem
+  std::vector<size_t> dblk = bulk_alloc_dblk(inum, blk_count);
+  size_t counter = 0;
+  for (auto offset : dblk) {
+    std::cout << "target inum: " << inum << " target dblock: " << offset
+              << " file size: " << size << std::endl;
 
-  // copy the content
-  memset(blocks + offset * sb.blk_size, 0, sb.blk_size);
-  memcpy(blocks + offset * sb.blk_size, buffer, size);
+    // copy the content
+    memset(blocks + offset * sb.blk_size, 0, sb.blk_size);
+    // maybe over the boundry here
+    memcpy(blocks + offset * sb.blk_size, buffer + counter * sb.blk_size,
+           sb.blk_size);
+    ++counter;
+  }
 
   // modify the inode info
   struct timespec now;
   timespec_get(&now, TIME_UTC);
 
-  inodes[inum].i_block[0] = offset;
-  inodes[inum].i_blocks = 1;
+  inodes[inum].i_blocks = blk_count;
   inodes[inum].i_size = size;
   inodes[inum].MTIME = now;
 
@@ -261,7 +334,7 @@ int write(size_t inum, const char *buffer, size_t size) {
 }
 
 int read(size_t inum, char *buffer, size_t size) {
-  // Workaround:: only small size and no offset, so only one block needed
+  // workaround:: only small size and no offset, so only one block needed
   size_t offset = inodes[inum].i_block[0];
 
   std::cout << "target inum: " << inum << " target dblock: " << offset
@@ -361,8 +434,7 @@ static int op_read(const char *path, char *buffer, size_t size, off_t offset,
                    struct fuse_file_info *fi) {
   std::cout << "Reading file: " << path << std::endl;
 
-  std::cout << " offset: " << offset
-            << " file size: " << size << std::endl;
+  std::cout << " offset: " << offset << " file size: " << size << std::endl;
 
   std::vector<std::string> splited_path = split_path(path);
   size_t inum = find_inum(splited_path);
@@ -375,12 +447,11 @@ static int op_read(const char *path, char *buffer, size_t size, off_t offset,
 static int op_write(const char *path, const char *buffer, size_t size,
                     off_t offset, struct fuse_file_info *fi) {
   std::cout << "Writing file: " << path << std::endl;
-  if (size < sb.blk_size) {
-    std::vector<std::string> splited_path = split_path(path);
-    size_t inum = find_inum(splited_path);
-    if (imap.test(inum))
-      write(inum, buffer, size);
-  }
+  std::vector<std::string> splited_path = split_path(path);
+  size_t inum = find_inum(splited_path);
+  if (imap.test(inum))
+    write(inum, buffer, size);
+
   return size;
 }
 
@@ -417,8 +488,9 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
   sb.dmap_size = DMAP_SIZE;
   sb.num_free_dblk = DMAP_SIZE;
   sb.cur_inode = root_inode_num; // 0 is for root
-  std::cout << "Size of inode: " << sizeof(struct inode)<<std::endl;
-  std::cout << "Size of size_t: " << sizeof(size_t)<<std::endl;
+  std::cout << "Size of inode: " << sizeof(struct inode) << std::endl;
+  std::cout << "Size of indirect_offset: " << sizeof(indirect_offset)
+            << std::endl;
   std::cout << "Init SuperBlock" << std::endl;
 
   imap.set(root_inode_num);
@@ -429,8 +501,8 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
   inodes[root_inode_num].i_nlink = 2;
   inodes[root_inode_num].i_parent = 0;
 
-  //std::string s = "/";
-  //inodes[root_inode_num].i_name = &s;
+  // std::string s = "/";
+  // inodes[root_inode_num].i_name = &s;
   inodes[root_inode_num].i_uid = getuid();
   inodes[root_inode_num].i_gid = getgid();
   inodes[root_inode_num].i_type = IFDIR;
