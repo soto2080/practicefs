@@ -23,7 +23,7 @@ Nothing working
 # Todo
 IN RAM:
 triple indirect offset
-
 ... and so on
+
 IN BLK DEV:
 Everything
