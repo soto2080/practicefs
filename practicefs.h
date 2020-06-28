@@ -89,7 +89,7 @@ enum INODE_TYPE {
 
 struct inode {
     enum INODE_TYPE i_type; /* What kind of file this inode point to */
-    std::string     *i_name;    /* File readable name*/
+    //std::string     *i_name;    /* File readable name*/
     size_t		i_nlink;	/* File link count. */
 	size_t	    i_uid;		/* File owner. */
 	size_t	    i_gid;		/* File group. */

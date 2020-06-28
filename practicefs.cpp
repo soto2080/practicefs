@@ -7,6 +7,7 @@
 #include "practicefs.h"
 #include <algorithm>
 #include <alloca.h>
+#include <asm-generic/errno-base.h>
 #include <bits/stdint-uintn.h>
 #include <bitset>
 #include <cstddef>
@@ -118,17 +119,19 @@ size_t alloc_inum() {
     ++idx;
   }
   imap.set(idx);
+  --sb.num_free_inode;
   return idx;
 }
 
 // Find one free datablock index
-size_t alloc_dblock() {
+size_t alloc_dblk() {
   // All idx are available
   size_t idx = 0;
   while (idx < dmap.size() && dmap.test(idx)) {
     ++idx;
   }
   dmap.set(idx);
+  --sb.num_free_dblk;
   return idx;
 }
 
@@ -145,7 +148,7 @@ int init_inode(std::string name, size_t inum, size_t parent, INODE_TYPE type) {
     inodes[inum].i_parent = parent;
     inodes[inum].i_uid = getuid();
     inodes[inum].i_gid = getgid();
-    inodes[inum].i_name = &name;
+    //inodes[inum].i_name = &name;
     inodes[inum].ATIME = now;
     inodes[inum].CTIME = now;
     inodes[inum].MTIME = now;
@@ -167,7 +170,7 @@ int init_inode(std::string name, size_t inum, size_t parent, INODE_TYPE type) {
 }
 
 void print_inode(size_t inum) {
-  std::cout << "i_name: " << *inodes[inum].i_name << std::endl
+  std::cout //<< "i_name: " << *inodes[inum].i_name << std::endl
             << "i_uid: " << inodes[inum].i_uid << std::endl
             << "i_gid: " << inodes[inum].i_gid << std::endl
             << "i_nlink: " << inodes[inum].i_nlink << std::endl
@@ -216,9 +219,10 @@ int rm_inode(std::string path) {
 
   // TODO: deallocate datablocks
 
-  // Reset inode map and memset the struct
+  // Reset inode map, inc the free inode counter and memset the struct
   if (imap.test(inum)) {
     imap.reset(inum);
+    ++sb.num_free_inode;
     memset(&inodes[inum], 0, sizeof(struct inode));
   }
 
@@ -226,10 +230,15 @@ int rm_inode(std::string path) {
 }
 
 int write(size_t inum, const char *buffer, size_t size) {
-  // Workaround:: only small size and no offset, so only one block needed
+  // Workaround:: ignore the offset
+  // Count necessary number by round up of datablock first
+  size_t blk_count = (size+sb.blk_size-1)/sb.blk_size;
 
-  // get available datablock
-  size_t offset = alloc_dblock();
+  if(blk_count > sb.num_free_dblk)
+    return -E2BIG;
+  
+  // get necessary datablock
+  size_t offset = alloc_dblk();
 
   std::cout << "target inum: " << inum << " target dblock: " << offset
             << " file size: " << size << std::endl;
@@ -407,7 +416,9 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
   sb.num_free_inode = IMAP_SIZE;
   sb.dmap_size = DMAP_SIZE;
   sb.num_free_dblk = DMAP_SIZE;
-  sb.cur_inode = 1; // 0 is for root
+  sb.cur_inode = root_inode_num; // 0 is for root
+  std::cout << "Size of inode: " << sizeof(struct inode)<<std::endl;
+  std::cout << "Size of size_t: " << sizeof(size_t)<<std::endl;
   std::cout << "Init SuperBlock" << std::endl;
 
   imap.set(root_inode_num);
@@ -418,8 +429,8 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
   inodes[root_inode_num].i_nlink = 2;
   inodes[root_inode_num].i_parent = 0;
 
-  std::string s = "/";
-  inodes[root_inode_num].i_name = &s;
+  //std::string s = "/";
+  //inodes[root_inode_num].i_name = &s;
   inodes[root_inode_num].i_uid = getuid();
   inodes[root_inode_num].i_gid = getgid();
   inodes[root_inode_num].i_type = IFDIR;
@@ -430,8 +441,7 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
   inodes[root_inode_num].CTIME = now;
   inodes[root_inode_num].MTIME = now;
 
-  std::cout << "Init Root Inode:" << *inodes[root_inode_num].i_name
-            << std::endl;
+  std::cout << "Init Root Inode" << std::endl;
 
   blocks = (char *)malloc(sb.blk_size * sb.dmap_size);
   // memset(inodes, 0, sizeof(inodes) * sb.imap_size);
