@@ -148,9 +148,9 @@ int init_inode(std::string name, size_t inum, size_t parent, INODE_TYPE type) {
     inodes[inum].i_uid = getuid();
     inodes[inum].i_gid = getgid();
     // inodes[inum].i_name = &name;
-    inodes[inum].ATIME = now;
-    inodes[inum].CTIME = now;
-    inodes[inum].MTIME = now;
+    inodes[inum].i_atim = now;
+    inodes[inum].i_ctim = now;
+    inodes[inum].i_mtim = now;
 
     memset(inodes[inum].i_block, 0 , sizeof(size_t)* EXT2_N_BLOCKS);
 
@@ -164,7 +164,7 @@ int init_inode(std::string name, size_t inum, size_t parent, INODE_TYPE type) {
 
     // inject the inode into its parent's dir list
     inodes[parent].entries.push_back(new directory_entry(inum, name));
-    inodes[parent].CTIME = now;
+    inodes[parent].i_ctim = now;
     return 0;
   }
   return -1;
@@ -327,7 +327,7 @@ int write(size_t inum, const char *buffer, size_t size) {
 
   inodes[inum].i_blocks = blk_count;
   inodes[inum].i_size = size;
-  inodes[inum].MTIME = now;
+  inodes[inum].i_mtim = now;
 
   // return successful with copyed size
   return size;
@@ -346,7 +346,7 @@ int read(size_t inum, char *buffer, size_t size) {
   // modify the inode access time info
   struct timespec now;
   timespec_get(&now, TIME_UTC);
-  inodes[inum].ATIME = now;
+  inodes[inum].i_atim = now;
 
   return size;
 }
@@ -373,9 +373,9 @@ static int op_getattr(const char *path, struct stat *st,
     }
     st->st_nlink = inodes[inum].i_nlink;
     st->st_size = inodes[inum].i_size;
-    st->st_atim = inodes[inum].ATIME;
-    st->st_mtim = inodes[inum].MTIME;
-    st->st_ctim = inodes[inum].CTIME;
+    st->st_atim = inodes[inum].i_atim;
+    st->st_mtim = inodes[inum].i_mtim;
+    st->st_ctim = inodes[inum].i_ctim;
   } else {
     return -ENOENT;
   }
@@ -509,9 +509,9 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
 
   struct timespec now;
   timespec_get(&now, TIME_UTC);
-  inodes[root_inode_num].ATIME = now;
-  inodes[root_inode_num].CTIME = now;
-  inodes[root_inode_num].MTIME = now;
+  inodes[root_inode_num].i_atim = now;
+  inodes[root_inode_num].i_ctim = now;
+  inodes[root_inode_num].i_mtim = now;
 
   std::cout << "Init Root Inode" << std::endl;
 
@@ -533,8 +533,8 @@ static int op_utimens(const char *path, const struct timespec tv[2],
   timespec_get(&now, TIME_UTC);
 
   // Workaround, the timespec give wrong time
-  inodes[inum].ATIME = now;
-  inodes[inum].CTIME = now;
+  inodes[inum].i_atim = now;
+  inodes[inum].i_ctim = now;
 
   // inodes[inum].ATIME = tv[0];
   // inodes[inum].CTIME = tv[1];

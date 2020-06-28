@@ -101,9 +101,9 @@ struct inode {
     size_t i_block[EXT2_N_BLOCKS]; /* array of blk offsets in storage */
     std::vector<directory_entry *> entries; /* pointer to dir content list */
 
-    struct timespec ATIME;
-    struct timespec CTIME;
-    struct timespec MTIME;
+    struct timespec i_atim;
+    struct timespec i_ctim;
+    struct timespec i_mtim;
     // Time Related
 };
 
