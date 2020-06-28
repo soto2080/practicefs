@@ -20,8 +20,8 @@ const int DMAP_SIZE = 512;
 /*
 DataBlock:
 */
-const int BLK_SIZE = 512;
-const int PG_SIZE = 8 * BLK_SIZE;
+const int BLK_SIZE = 4096;
+const int PG_SIZE = 1 * BLK_SIZE;
 
 struct datablock {
     char data[BLK_SIZE];

@@ -6,6 +6,7 @@
 
 #include "practicefs.h"
 #include <algorithm>
+#include <alloca.h>
 #include <bits/stdint-uintn.h>
 #include <bitset>
 #include <cstddef>
@@ -120,6 +121,17 @@ size_t alloc_inum() {
   return idx;
 }
 
+// Find one free datablock index
+size_t alloc_dblock() {
+  // All idx are available
+  size_t idx = 0;
+  while (idx < dmap.size() && dmap.test(idx)) {
+    ++idx;
+  }
+  dmap.set(idx);
+  return idx;
+}
+
 int init_inode(std::string name, size_t inum, size_t parent, INODE_TYPE type) {
   if (inodes[parent].i_type == IFDIR) {
     struct timespec now;
@@ -213,6 +225,50 @@ int rm_inode(std::string path) {
   return 0;
 }
 
+int write(size_t inum, const char *buffer, size_t size) {
+  // Workaround:: only small size and no offset, so only one block needed
+
+  // get available datablock
+  size_t offset = alloc_dblock();
+
+  std::cout << "target inum: " << inum << " target dblock: " << offset
+            << " file size: " << size << std::endl;
+
+  // copy the content
+  memset(blocks + offset * sb.blk_size, 0, sb.blk_size);
+  memcpy(blocks + offset * sb.blk_size, buffer, size);
+
+  // modify the inode info
+  struct timespec now;
+  timespec_get(&now, TIME_UTC);
+
+  inodes[inum].i_block[0] = offset;
+  inodes[inum].i_blocks = 1;
+  inodes[inum].i_size = size;
+  inodes[inum].MTIME = now;
+
+  // return successful with copyed size
+  return size;
+}
+
+int read(size_t inum, char *buffer, size_t size) {
+  // Workaround:: only small size and no offset, so only one block needed
+  size_t offset = inodes[inum].i_block[0];
+
+  std::cout << "target inum: " << inum << " target dblock: " << offset
+            << " file size: " << size << std::endl;
+
+  // copy the content
+  memcpy(buffer, blocks + offset * sb.blk_size, size);
+
+  // modify the inode access time info
+  struct timespec now;
+  timespec_get(&now, TIME_UTC);
+  inodes[inum].ATIME = now;
+
+  return size;
+}
+
 // Functions
 static int op_getattr(const char *path, struct stat *st,
                       struct fuse_file_info *info) {
@@ -295,13 +351,28 @@ static int op_rmdir(const char *path) {
 static int op_read(const char *path, char *buffer, size_t size, off_t offset,
                    struct fuse_file_info *fi) {
   std::cout << "Reading file: " << path << std::endl;
-  return 0;
+
+  std::cout << " offset: " << offset
+            << " file size: " << size << std::endl;
+
+  std::vector<std::string> splited_path = split_path(path);
+  size_t inum = find_inum(splited_path);
+  if (imap.test(inum))
+    read(inum, buffer, size);
+
+  return size;
 }
 
 static int op_write(const char *path, const char *buffer, size_t size,
                     off_t offset, struct fuse_file_info *fi) {
   std::cout << "Writing file: " << path << std::endl;
-  return 0;
+  if (size < sb.blk_size) {
+    std::vector<std::string> splited_path = split_path(path);
+    size_t inum = find_inum(splited_path);
+    if (imap.test(inum))
+      write(inum, buffer, size);
+  }
+  return size;
 }
 
 static int op_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
@@ -358,7 +429,7 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
   inodes[root_inode_num].ATIME = now;
   inodes[root_inode_num].CTIME = now;
   inodes[root_inode_num].MTIME = now;
-  
+
   std::cout << "Init Root Inode:" << *inodes[root_inode_num].i_name
             << std::endl;
 
@@ -375,7 +446,7 @@ static int op_utimens(const char *path, const struct timespec tv[2],
   std::vector<std::string> splited_path = split_path(path);
   size_t inum = find_inum(splited_path);
 
-  // Get the
+  // Get timespec
   struct timespec now;
   timespec_get(&now, TIME_UTC);
 
