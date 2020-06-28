@@ -20,7 +20,6 @@ const int DMAP_SIZE = 512;
 /*
 DataBlock:
 */
-
 const int BLK_SIZE = 512;
 const int PG_SIZE = 8 * BLK_SIZE;
 
@@ -94,7 +93,7 @@ struct inode {
     size_t        i_number;   /* The identity of the inode. */
     size_t        i_parent;   /* The parent of the inode. */
 
-    struct datablock  *i_block[EXT2_N_BLOCKS]; /* pointer to datablock */
+    size_t i_block[EXT2_N_BLOCKS]; /* array of blk offsets in storage */
     std::vector<directory_entry *> entries; /* pointer to dir content list */
 
     struct timespec ATIME;
