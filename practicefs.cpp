@@ -30,6 +30,9 @@ std::bitset<DMAP_SIZE> dmap(0);
 static char *blocks;
 static struct inode inodes[IMAP_SIZE];
 
+// Cache
+std::vector<size_t> blk_cache;
+
 // Helpers
 
 // Split the full string into small pieces till last /
@@ -292,6 +295,10 @@ std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt) {
   //  dblk.push_back(offset);
   //}
   // std::cout<<"Size3:"<<dblk.size()<<std::endl;
+  
+  // A testing cache
+  blk_cache = dblk;
+
   return dblk;
 }
 
@@ -341,7 +348,12 @@ int read(size_t inum, char *buffer, size_t size) {
             << " file size: " << size << std::endl;
 
   // copy the content
-  memcpy(buffer, blocks + offset * sb.blk_size, size);
+  size_t cnt = 0;
+  for(auto offset: blk_cache){
+    memcpy(buffer + cnt * sb.blk_size , blocks + offset * sb.blk_size, sb.blk_size);
+    ++cnt;
+  }
+  
 
   // modify the inode access time info
   struct timespec now;
