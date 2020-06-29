@@ -55,14 +55,14 @@ class file_name{
 public:
     size_t inode_num;
     char name[BLK_SIZE-8];
-    file_name();
+
+    file_name(){
+    };
     file_name(size_t inum, const char* input){
         this->inode_num = inum;
         size_t len = strlen(input);
-        if(len > BLK_SIZE-8)
-            strncpy(this->name, input, BLK_SIZE-8);
-        else
-            strncpy(this->name, input, len);
+        if(len < BLK_SIZE-8)
+            strcpy(this->name, input);    
     }
     std::string get_name(){
         std::string tmp(name);

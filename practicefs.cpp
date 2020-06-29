@@ -34,9 +34,11 @@ int init_inode(std::string name, size_t inum, size_t parent, INODE_TYPE type);
 void print_inode(size_t inum);
 int rm_inode(std::string path);
 std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt);
-std::vector<size_t> get_offset(size_t inum);
+std::vector<size_t> get_offset(size_t inum, size_t cnt);
 int write(size_t inum, const char *buffer, size_t size);
 int read(size_t inum, char *buffer, size_t size);
+void save_entry(size_t inum);
+void restore_entry(size_t inum);
 
 // Global variables
 struct superblock sb;
@@ -51,7 +53,36 @@ std::vector<size_t> blk_cache;
 
 // Helpers
 
+//
+// Deallocating dblks
+//
+int dealloc_dblk(size_t inum, size_t cnt){
+    std::vector<size_t> dblk = get_offset(inum, cnt);
+
+    size_t offset = inodes[inum].i_block[EXT2_IND_BLOCK];
+    if (offset != 0) {
+      dblk.push_back(offset);
+    }
+    offset = inodes[inum].i_block[EXT2_DIND_BLOCK];
+    if (offset != 0) {
+      dblk.push_back(offset);
+    }
+    offset = inodes[inum].i_block[EXT2_TIND_BLOCK];
+    if (offset != 0) {
+      dblk.push_back(offset);
+    }
+
+    for (auto offset : dblk) {
+      dmap.reset(offset);
+      ++sb.num_free_dblk;
+      memset(blocks + offset * sb.blk_size, 0, sb.blk_size);
+    }
+    return 0;
+}
+
+//
 // Split the full string into small pieces till last /
+//
 std::vector<std::string> split_path(const char *path) {
   std::string str(path);
   std::vector<std::string> ancestor;
@@ -239,27 +270,9 @@ int rm_inode(std::string path) {
 
   // Deallocate datablocks if it's a reg file
   if (inodes[inum].i_type == IFREG) {
-    std::vector<size_t> dblk = get_offset(inum);
-
-    size_t offset = inodes[inum].i_block[EXT2_IND_BLOCK];
-    if (offset != 0) {
-      dblk.push_back(offset);
-    }
-    offset = inodes[inum].i_block[EXT2_DIND_BLOCK];
-    if (offset != 0) {
-      dblk.push_back(offset);
-    }
-    offset = inodes[inum].i_block[EXT2_TIND_BLOCK];
-    if (offset != 0) {
-      dblk.push_back(offset);
-    }
-
-    for (auto offset : dblk) {
-      dmap.reset(offset);
-      ++sb.num_free_dblk;
-      memset(blocks + offset * sb.blk_size, 0, sb.blk_size);
-    }
+    dealloc_dblk(inum, inodes[inum].i_blocks);
   }
+  
   // Reset inode map, inc the free inode counter and memset the struct
   if (imap.test(inum)) {
     imap.reset(inum);
@@ -282,7 +295,7 @@ std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt) {
     inodes[inum].i_block[i] = offset;
     dblk.push_back(offset);
   }
-  //std::cout << "Size1:" << dblk.size() << std::endl;
+  // std::cout << "Size1:" << dblk.size() << std::endl;
 
   if (cnt) {
     // using single indirect offset table then
@@ -297,7 +310,7 @@ std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt) {
     }
     memcpy(blocks + offset_in * sb.blk_size, set, sb.blk_size);
     delete set;
-  //  std::cout << "Size2:" << dblk.size() << std::endl;
+    //  std::cout << "Size2:" << dblk.size() << std::endl;
   }
   if (cnt) {
     // using double indirect offset table when needed
@@ -324,7 +337,7 @@ std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt) {
     // save the layer-1 table
     memcpy(blocks + offset_out * sb.blk_size, set2, sb.blk_size);
     delete set2;
-  //  std::cout << "Size3:" << dblk.size() << std::endl;
+    //  std::cout << "Size3:" << dblk.size() << std::endl;
   }
   /*TODO: fix triple indirect offset*/
 
@@ -334,10 +347,8 @@ std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt) {
   return dblk;
 }
 
-std::vector<size_t> get_offset(size_t inum) {
+std::vector<size_t> get_offset(size_t inum, size_t cnt) {
   std::vector<size_t> dblk;
-
-  size_t cnt = inodes[inum].i_blocks;
 
   // count if we need single indirect offset or even double indirect offset
   size_t num_per_indir = BLK_SIZE / sizeof(size_t);
@@ -346,7 +357,7 @@ std::vector<size_t> get_offset(size_t inum) {
   for (int i = 0; cnt && i < EXT2_NDIR_BLOCKS; ++i, --cnt) {
     dblk.push_back(inodes[inum].i_block[i]);
   }
-  //std::cout << "Size1:" << dblk.size() << std::endl;
+  // std::cout << "Size1:" << dblk.size() << std::endl;
 
   if (cnt) {
     // using single indirect offset table then
@@ -360,7 +371,7 @@ std::vector<size_t> get_offset(size_t inum) {
     }
 
     delete set;
-  //  std::cout << "Size2:" << dblk.size() << std::endl;
+    //  std::cout << "Size2:" << dblk.size() << std::endl;
   }
 
   if (cnt) {
@@ -385,7 +396,7 @@ std::vector<size_t> get_offset(size_t inum) {
       delete set;
     }
     delete set2;
-  //  std::cout << "Size3:" << dblk.size() << std::endl;
+    //  std::cout << "Size3:" << dblk.size() << std::endl;
   }
   /*TODO: fix triple indirect offset*/
 
@@ -441,7 +452,7 @@ int read(size_t inum, char *buffer, size_t size) {
 
   // copy the content
   size_t cnt = 0;
-  std::vector<size_t> dblk = get_offset(inum);
+  std::vector<size_t> dblk = get_offset(inum, inodes[inum].i_blocks);
   for (auto offset : dblk) {
     memcpy(buffer + cnt * sb.blk_size, blocks + offset * sb.blk_size,
            sb.blk_size);
@@ -454,6 +465,63 @@ int read(size_t inum, char *buffer, size_t size) {
   inodes[inum].i_atim = now;
 
   return size;
+}
+
+//
+// save inode's dir entry into it's datablocks
+//
+void save_entry(size_t inum) {
+  size_t cnt = inodes[inum].entries.size();
+  // update the saved entry num
+  inodes[inum].i_size = cnt;
+
+  // TODO: one block could save a lot of entries, we save one filename in one
+  // block currently.
+  //// calculate how many data blocks we need
+  // size_t entry_per_block = sb.blk_size / sizeof(file_name);
+  // size_t dbnum = (cnt + entry_per_block -1) / entry_per_block;
+
+  // deallocating original datablocks
+  dealloc_dblk(inum, cnt);
+
+  // allocating dblocks
+  std::vector<size_t> dblk = bulk_alloc_dblk(inum, cnt);
+
+  // dump the content of dir
+  // file_name tmp[cnt];
+  //std::cout<<"Saving"<<std::endl;
+  for (size_t conunter = 0; conunter < cnt; ++conunter) {
+    file_name *tmp =
+        new file_name(inodes[inum].entries[conunter]->inode_num,
+                      inodes[inum].entries[conunter]->name.c_str());
+    //std::cout<<"dir cnt: "<<cnt<<" counter: "<<conunter<<" name: "<<tmp->get_name()<<"  toblk: "<<dblk[conunter]<<std::endl;
+    memset(blocks + dblk[conunter] * sb.blk_size, 0, sb.blk_size);
+    memcpy(blocks + dblk[conunter] * sb.blk_size, tmp, sb.blk_size);
+    delete tmp;
+  }
+}
+
+//
+// restore inode's dir entry from it's datablocks
+//
+void restore_entry(size_t inum) {
+  // copy the content
+  inodes[inum].entries.clear();
+  std::vector<size_t> dblk = get_offset(inum, inodes[inum].i_size);
+  file_name *tmp;
+  for (auto offset : dblk) {
+    tmp = new file_name();
+    memset(tmp, 0, sb.blk_size);
+    memcpy(tmp, blocks + offset * sb.blk_size, sb.blk_size);
+    inodes[inum].entries.push_back(
+        new directory_entry(tmp->inode_num, tmp->get_name()));
+    delete tmp;
+  }
+
+
+  //for (auto entry : inodes[inum].entries) {
+  //  std::cout <<"name: "<< entry->name <<" inum: "<<entry->inode_num<< std::endl;
+  //}
 }
 
 // Functions
@@ -473,12 +541,14 @@ static int op_getattr(const char *path, struct stat *st,
     st->st_gid = inodes[inum].i_gid;
     if (inodes[inum].i_type == IFDIR) {
       st->st_mode = S_IFDIR | 0755;
+      st->st_blocks = 8;
+      st->st_size = sb.blk_size;
     } else {
       st->st_mode = S_IFREG | 0644;
+      st->st_blocks = inodes[inum].i_blocks;
+      st->st_size = inodes[inum].i_size;
     }
     st->st_nlink = inodes[inum].i_nlink;
-    st->st_blocks = inodes[inum].i_blocks;
-    st->st_size = inodes[inum].i_size;
     st->st_atim = inodes[inum].i_atim;
     st->st_mtim = inodes[inum].i_mtim;
     st->st_ctim = inodes[inum].i_ctim;
@@ -504,6 +574,10 @@ static int op_mknod(const char *path, mode_t mode, dev_t rdev) {
   // Init the new inode to the inum
   init_inode(split_filename(path), i_num, parent, IFREG);
   // print_inode(i_num);
+
+  save_entry(i_num);
+  restore_entry(i_num);
+
   return 0;
 }
 
@@ -576,7 +650,7 @@ static int op_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
   if (inodes[inum].i_type == IFDIR) {
 
     for (auto entry : inodes[inum].entries) {
-      // std::cout<<entry->name<<std::endl;
+      //std::cout<<entry->name<<std::endl;
       filler(buffer, entry->name.c_str(), NULL, 0, FUSE_FILL_DIR_PLUS);
     }
     return 0;
