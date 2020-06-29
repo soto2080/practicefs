@@ -46,8 +46,9 @@ static int fd;
 struct superblock sb;
 std::bitset<IMAP_SIZE> imap(0);
 std::bitset<DMAP_SIZE> dmap(0);
-// struct datablock blocks[DMAP_SIZE];
-static size_t blocks = 0;
+
+// Datablock is hardcoded from 100blk
+static size_t blocks = 200 * BLK_SIZE;
 char zero[BLK_SIZE];
 static struct inode inodes[IMAP_SIZE];
 
@@ -56,32 +57,84 @@ std::vector<size_t> blk_cache;
 
 // Helpers
 
+// commit and restore superblock
+void commit_sb() {
+  lseek(fd, 0 /*SUPERBLK_OFFSET*/ * BLK_SIZE, SEEK_SET);
+  write(fd, zero, sb.blk_size);
+  lseek(fd, 0 /*SUPERBLK_OFFSET*/ * BLK_SIZE, SEEK_SET);
+  write(fd, &sb, /*SUPERBLK_SIZE*/ 64);
+  std::cout<<"Commit Superblock"<<std::endl;
+}
+void restore_sb() {
+  lseek(fd, 0 /*SUPERBLK_OFFSET*/ * BLK_SIZE, SEEK_SET);
+  read(fd, &sb, /*SUPERBLK_SIZE*/ 64);
+  std::cout<<"Restore Superblock"<<std::endl;
+}
+
+// commit and restore bitmap
+// imap size 128 => 1 blk
+// dmap size 131072 => 32blk
+void commit_imap() {
+  lseek(fd, 1 /*IMAP_OFFSET*/ * BLK_SIZE, SEEK_SET);
+  write(fd, &imap, /*IMAP_SIZE*/ sizeof(imap));
+  std::cout<<"Commit IMAP"<<std::endl;
+}
+void restore_imap() {
+  lseek(fd, 1 /*IMAP_OFFSET*/ * BLK_SIZE, SEEK_SET);
+  read(fd, &imap, /*IMAP_SIZE*/ sizeof(inode));
+  std::cout<<"Restore IMAP"<<std::endl;
+}
+
+void commit_dmap() {
+  lseek(fd, 10 /*DMAP_OFFSET*/ * BLK_SIZE, SEEK_SET);
+  write(fd, &dmap, /*DMAP_SIZE*/ sizeof(dmap));
+  std::cout<<"Commit DMAP"<<std::endl;
+}
+void restore_dmap() {
+  lseek(fd, 10 /*DMAP_OFFSET*/ * BLK_SIZE, SEEK_SET);
+  read(fd, &dmap, /*DMAP_SIZE*/ sizeof(dmap));
+  std::cout<<"Restore DMAP"<<std::endl;
+}
+
+// commit and restore inodes
+void commit_inode() {
+  lseek(fd, 100 /*INODE_OFFSET*/ * BLK_SIZE, SEEK_SET);
+  write(fd, &inodes, /*INODE_SIZE * NUMBER */ sizeof(inode) * IMAP_SIZE);
+  std::cout<<"Commit INODE"<<std::endl;
+}
+void restore_inode() {
+  lseek(fd, 100 /*INODE_OFFSET*/ * BLK_SIZE, SEEK_SET);
+  read(fd, &inodes, /*INODE_SIZE * NUMBER */ sizeof(inode) * IMAP_SIZE);
+  std::cout<<"Restore INODE"<<std::endl;
+}
+
 //
 // Deallocating dblks
 //
-int dealloc_dblk(size_t inum, size_t cnt){
-    std::vector<size_t> dblk = get_offset(inum, cnt);
+int dealloc_dblk(size_t inum, size_t cnt) {
+  std::vector<size_t> dblk = get_offset(inum, cnt);
 
-    size_t offset = inodes[inum].i_block[EXT2_IND_BLOCK];
-    if (offset != 0) {
-      dblk.push_back(offset);
-    }
-    offset = inodes[inum].i_block[EXT2_DIND_BLOCK];
-    if (offset != 0) {
-      dblk.push_back(offset);
-    }
-    offset = inodes[inum].i_block[EXT2_TIND_BLOCK];
-    if (offset != 0) {
-      dblk.push_back(offset);
-    }
+  size_t offset = inodes[inum].i_block[EXT2_IND_BLOCK];
+  if (offset != 0) {
+    dblk.push_back(offset);
+  }
+  offset = inodes[inum].i_block[EXT2_DIND_BLOCK];
+  if (offset != 0) {
+    dblk.push_back(offset);
+  }
+  offset = inodes[inum].i_block[EXT2_TIND_BLOCK];
+  if (offset != 0) {
+    dblk.push_back(offset);
+  }
 
-    for (auto offset : dblk) {
-      dmap.reset(offset);
-      ++sb.num_free_dblk;
-      lseek(fd, blocks + offset * sb.blk_size, SEEK_SET);
-      write(fd, zero, sb.blk_size);
-    }
-    return 0;
+  for (auto offset : dblk) {
+    dmap.reset(offset);
+    ++sb.num_free_dblk;
+    lseek(fd, blocks + offset * sb.blk_size, SEEK_SET);
+    write(fd, zero, sb.blk_size);
+  }
+  commit_dmap();
+  return 0;
 }
 
 //
@@ -173,6 +226,7 @@ size_t alloc_inum() {
   }
   imap.set(idx);
   --sb.num_free_inode;
+  commit_imap();
   return idx;
 }
 
@@ -185,6 +239,7 @@ size_t alloc_dblk() {
   }
   dmap.set(idx);
   --sb.num_free_dblk;
+  commit_dmap();
   return idx;
 }
 
@@ -219,6 +274,9 @@ int init_inode(std::string name, size_t inum, size_t parent, INODE_TYPE type) {
     // inject the inode into its parent's dir list
     inodes[parent].entries.push_back(new directory_entry(inum, name));
     inodes[parent].i_ctim = now;
+
+    // commit
+    commit_inode();
     return 0;
   }
   return -1;
@@ -276,14 +334,17 @@ int rm_inode(std::string path) {
   if (inodes[inum].i_type == IFREG) {
     dealloc_dblk(inum, inodes[inum].i_blocks);
   }
-  
+
   // Reset inode map, inc the free inode counter and memset the struct
   if (imap.test(inum)) {
     imap.reset(inum);
     ++sb.num_free_inode;
     memset(&inodes[inum], 0, sizeof(struct inode));
   }
-
+  // commit everything except sb
+  commit_inode();
+  commit_imap();
+  commit_dmap();
   return 0;
 }
 
@@ -351,6 +412,9 @@ std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt) {
   // A cache
   blk_cache = dblk;
 
+  //
+  commit_imap();
+  commit_inode();
   return dblk;
 }
 
@@ -500,12 +564,13 @@ void save_entry(size_t inum) {
 
   // dump the content of dir
   // file_name tmp[cnt];
-  //std::cout<<"Saving"<<std::endl;
+  // std::cout<<"Saving"<<std::endl;
   for (size_t conunter = 0; conunter < cnt; ++conunter) {
     file_name *tmp =
         new file_name(inodes[inum].entries[conunter]->inode_num,
                       inodes[inum].entries[conunter]->name.c_str());
-    //std::cout<<"dir cnt: "<<cnt<<" counter: "<<conunter<<" name: "<<tmp->get_name()<<"  toblk: "<<dblk[conunter]<<std::endl;
+    // std::cout<<"dir cnt: "<<cnt<<" counter: "<<conunter<<" name:
+    // "<<tmp->get_name()<<"  toblk: "<<dblk[conunter]<<std::endl;
     lseek(fd, blocks + dblk[conunter] * sb.blk_size, SEEK_SET);
     write(fd, zero, sb.blk_size);
     lseek(fd, blocks + dblk[conunter] * sb.blk_size, SEEK_SET);
@@ -532,9 +597,9 @@ void restore_entry(size_t inum) {
     delete tmp;
   }
 
-
-  //for (auto entry : inodes[inum].entries) {
-  //  std::cout <<"name: "<< entry->name <<" inum: "<<entry->inode_num<< std::endl;
+  // for (auto entry : inodes[inum].entries) {
+  //  std::cout <<"name: "<< entry->name <<" inum: "<<entry->inode_num<<
+  //  std::endl;
   //}
 }
 
@@ -550,6 +615,7 @@ static int op_getattr(const char *path, struct stat *st,
   memset(st, 0, sizeof(struct stat));
 
   if (inum && imap.test(inum)) {
+    print_inode(inum);
     st->st_ino = inodes[inum].i_number;
     st->st_uid = inodes[inum].i_uid;
     st->st_gid = inodes[inum].i_gid;
@@ -589,6 +655,7 @@ static int op_mknod(const char *path, mode_t mode, dev_t rdev) {
   init_inode(split_filename(path), i_num, parent, IFREG);
   // print_inode(i_num);
 
+  // we only need save actually
   save_entry(i_num);
   restore_entry(i_num);
 
@@ -664,7 +731,7 @@ static int op_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
   if (inodes[inum].i_type == IFDIR) {
 
     for (auto entry : inodes[inum].entries) {
-      //std::cout<<entry->name<<std::endl;
+      // std::cout<<entry->name<<std::endl;
       filler(buffer, entry->name.c_str(), NULL, 0, FUSE_FILL_DIR_PLUS);
     }
     return 0;
@@ -675,47 +742,80 @@ static int op_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 }
 
 void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
+  bool init = false;
   memset(zero, 0, BLK_SIZE);
-  std::cout<< "Open blockdev"<<std::endl;
-  fd = open(BLOCK_DEV_PATH,O_RDWR);
+  std::cout << "Open blockdev" << std::endl;
+  fd = open(BLOCK_DEV_PATH, O_RDWR);
   lseek(fd, 0, SEEK_SET);
 
-  // Init superblock
-  sb.blk_size = BLK_SIZE;
-  sb.fs_size = 0;
-  sb.imap_size = IMAP_SIZE;
-  sb.num_free_inode = IMAP_SIZE;
-  sb.dmap_size = DMAP_SIZE;
-  sb.num_free_dblk = DMAP_SIZE;
-  sb.cur_inode = root_inode_num; // 0 is for root
-  std::cout << "Size of inode: " << sizeof(struct inode) << std::endl;
-  std::cout << "Size of filename: " << sizeof(file_name) << std::endl;
-  std::cout << "Size of indirect_offset: " << sizeof(indirect_offset)
-            << std::endl;
-  std::cout << "Init SuperBlock" << std::endl;
+  if (init) {
+    // Init superblock
+    sb.blk_size = BLK_SIZE;
+    sb.fs_size = 0;
+    sb.imap_size = IMAP_SIZE;
+    sb.num_free_inode = IMAP_SIZE;
+    sb.dmap_size = DMAP_SIZE;
+    sb.num_free_dblk = DMAP_SIZE;
+    sb.cur_inode = root_inode_num;
 
-  imap.set(root_inode_num);
+    // commit_sb();
+    // sb.cur_inode = 0;
+    // restore_sb();
+    // std::cout << "cur_inode: " << sb.cur_inode << std::endl;
 
-  inodes[root_inode_num].i_number = root_inode_num;
-  inodes[root_inode_num].i_blocks = 1;
-  inodes[root_inode_num].i_size = 4;
-  inodes[root_inode_num].i_nlink = 2;
-  inodes[root_inode_num].i_parent = 0;
+    std::cout << "imap: " << sizeof(imap) << std::endl;
+    std::cout << "dmap: " << sizeof(dmap) << std::endl;
+    std::cout << "Size of superblock: " << sizeof(struct superblock)
+              << std::endl;
+    std::cout << "Size of inode: " << sizeof(struct inode) << std::endl;
+    std::cout << "Size of filename: " << sizeof(file_name) << std::endl;
+    std::cout << "Size of indirect_offset: " << sizeof(indirect_offset)
+              << std::endl;
+    std::cout << "Init SuperBlock" << std::endl;
 
-  // std::string s = "/";
-  // inodes[root_inode_num].i_name = &s;
-  inodes[root_inode_num].i_uid = getuid();
-  inodes[root_inode_num].i_gid = getgid();
-  inodes[root_inode_num].i_type = IFDIR;
+    imap.set(root_inode_num);
 
-  struct timespec now;
-  timespec_get(&now, TIME_UTC);
-  inodes[root_inode_num].i_atim = now;
-  inodes[root_inode_num].i_ctim = now;
-  inodes[root_inode_num].i_mtim = now;
+    // commit_imap();
+    // commit_dmap();
+    // imap.set(0);
+    // dmap.set(0);
+    // if(imap.test(0) || dmap.test(0))
+    //   std::cout<<"SETTTING MAP"<<std::endl;
+    // restore_imap();
+    // restore_dmap();
+    // if(imap.test(0) || dmap.test(0))
+    //   std::cout<<"ERRORRRRRR"<<std::endl;
 
-  std::cout << "Init Root Inode" << std::endl;
+    inodes[root_inode_num].i_number = root_inode_num;
+    inodes[root_inode_num].i_blocks = 1;
+    inodes[root_inode_num].i_size = 4;
+    inodes[root_inode_num].i_nlink = 2;
+    inodes[root_inode_num].i_parent = 0;
+    inodes[root_inode_num].entries.clear();
 
+    // std::string s = "/";
+    // inodes[root_inode_num].i_name = &s;
+    inodes[root_inode_num].i_uid = getuid();
+    inodes[root_inode_num].i_gid = getgid();
+    inodes[root_inode_num].i_type = IFDIR;
+
+    struct timespec now;
+    timespec_get(&now, TIME_UTC);
+    inodes[root_inode_num].i_atim = now;
+    inodes[root_inode_num].i_ctim = now;
+    inodes[root_inode_num].i_mtim = now;
+
+    std::cout << "Init Root Inode" << std::endl;
+    commit_sb();
+    commit_imap();
+    commit_dmap();
+    commit_inode();
+  }else{
+    restore_sb();
+    restore_imap();
+    restore_dmap();
+    restore_inode();
+  }
   return nullptr;
 }
 

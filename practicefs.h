@@ -13,12 +13,23 @@
 
 #define BLOCK_DEV_PATH  "/dev/sdb"
 
+// hardcoded block offset
+// the UNIT is """BLK_SIZE"""
+#define SUPERBLK_OFFSET 0;
+#define IMAP_OFFSET 1;
+#define DMAP_OFFSET 10;
+// 256Bytes per * IMAP_SIZE / BLK_SIZE => 256*1024/4096 = 64BLK
+#define INODE_OFFSET 100;
+// DMAP_SIZE
+#define DATABLK_OFFSET 200;
+
+
 /*
 Bitmaps:
 */
 
-const int IMAP_SIZE = 256;
-const int DMAP_SIZE = 512;
+const int IMAP_SIZE = 1024;
+const int DMAP_SIZE = 1048576;
 
 /*
 DataBlock:
@@ -81,7 +92,7 @@ public:
 };
 
 /*
-SuperBlock:
+SuperBlock: 64Bytes
 */
 const int root_inode_num = 2;
 struct superblock {
@@ -119,7 +130,8 @@ enum INODE_TYPE {
 #define	EXT2_TIND_BLOCK			(EXT2_DIND_BLOCK + 1)
 #define	EXT2_N_BLOCKS			(EXT2_TIND_BLOCK + 1)
 
-struct inode {
+// 256Bytes per
+struct inode {  
     enum INODE_TYPE i_type; /* What kind of file this inode point to */
     //std::string     *i_name;    /* File readable name*/
     size_t		i_nlink;	/* File link count. */
