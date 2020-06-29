@@ -596,6 +596,7 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
   sb.num_free_dblk = DMAP_SIZE;
   sb.cur_inode = root_inode_num; // 0 is for root
   std::cout << "Size of inode: " << sizeof(struct inode) << std::endl;
+  std::cout << "Size of filename: " << sizeof(file_name) << std::endl;
   std::cout << "Size of indirect_offset: " << sizeof(indirect_offset)
             << std::endl;
   std::cout << "Init SuperBlock" << std::endl;

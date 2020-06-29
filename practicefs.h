@@ -2,6 +2,7 @@
 
 #define PRACTICEFS
 #include <cstddef>
+#include <cstring>
 #include <string>
 #include <vector>
 #define FUSE_USE_VERSION 31
@@ -31,6 +32,10 @@ struct datablock {
 /*
 Others:
 */
+
+//
+// In ram filename cache struct
+//
 class directory_entry {
 public:
   directory_entry(size_t inum, std::string name){
@@ -43,6 +48,27 @@ public:
   std::string name;
 };
 
+//
+// filename and inum, 256Bytes
+//
+class file_name{
+public:
+    size_t inode_num;
+    char name[248];
+    file_name();
+    file_name(size_t inum, const char* name){
+        this->inode_num = inum;
+        strncpy(this->name, name, 248);
+    }
+    std::string get_name(){
+        std::string tmp(name);
+        return tmp;
+    }
+};
+
+//
+// indirect offset table, matching the blk size
+//
 class indirect_offset{
 public:
     size_t table [ BLK_SIZE / sizeof(size_t) ];
@@ -99,7 +125,7 @@ struct inode {
     size_t        i_parent;   /* The parent of the inode. */
 
     size_t i_block[EXT2_N_BLOCKS]; /* array of blk offsets in storage */
-    std::vector<directory_entry *> entries; /* pointer to dir content list */
+    std::vector<directory_entry *> entries; /* pointer to dir content list contructed from filelist in blocks */
 
     struct timespec i_atim;
     struct timespec i_ctim;
