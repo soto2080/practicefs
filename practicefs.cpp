@@ -11,6 +11,7 @@
 #include <bitset>
 #include <cstddef>
 #include <cstdlib>
+#include <fcntl.h>
 #include <iostream>
 #include <iterator>
 #include <ostream>
@@ -35,17 +36,19 @@ void print_inode(size_t inum);
 int rm_inode(std::string path);
 std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt);
 std::vector<size_t> get_offset(size_t inum, size_t cnt);
-int write(size_t inum, const char *buffer, size_t size);
-int read(size_t inum, char *buffer, size_t size);
+int do_write(size_t inum, const char *buffer, size_t size);
+int do_read(size_t inum, char *buffer, size_t size);
 void save_entry(size_t inum);
 void restore_entry(size_t inum);
 
 // Global variables
+static int fd;
 struct superblock sb;
 std::bitset<IMAP_SIZE> imap(0);
 std::bitset<DMAP_SIZE> dmap(0);
 // struct datablock blocks[DMAP_SIZE];
-static char *blocks;
+static size_t blocks = 0;
+char zero[BLK_SIZE];
 static struct inode inodes[IMAP_SIZE];
 
 // Cache
@@ -75,7 +78,8 @@ int dealloc_dblk(size_t inum, size_t cnt){
     for (auto offset : dblk) {
       dmap.reset(offset);
       ++sb.num_free_dblk;
-      memset(blocks + offset * sb.blk_size, 0, sb.blk_size);
+      lseek(fd, blocks + offset * sb.blk_size, SEEK_SET);
+      write(fd, zero, sb.blk_size);
     }
     return 0;
 }
@@ -308,7 +312,8 @@ std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt) {
       set->table[i] = offset;
       dblk.push_back(offset);
     }
-    memcpy(blocks + offset_in * sb.blk_size, set, sb.blk_size);
+    lseek(fd, blocks + blocks + offset_in * sb.blk_size, SEEK_SET);
+    write(fd, set, sb.blk_size);
     delete set;
     //  std::cout << "Size2:" << dblk.size() << std::endl;
   }
@@ -331,11 +336,13 @@ std::vector<size_t> bulk_alloc_dblk(size_t inum, size_t cnt) {
         dblk.push_back(offset);
       }
       // save the layer-2 table
-      memcpy(blocks + offset_in * sb.blk_size, set, sb.blk_size);
+      lseek(fd, blocks + offset_in * sb.blk_size, SEEK_SET);
+      write(fd, set, sb.blk_size);
       delete set;
     }
     // save the layer-1 table
-    memcpy(blocks + offset_out * sb.blk_size, set2, sb.blk_size);
+    lseek(fd, blocks + offset_out * sb.blk_size, SEEK_SET);
+    write(fd, set2, sb.blk_size);
     delete set2;
     //  std::cout << "Size3:" << dblk.size() << std::endl;
   }
@@ -364,7 +371,8 @@ std::vector<size_t> get_offset(size_t inum, size_t cnt) {
     size_t offset = inodes[inum].i_block[EXT2_IND_BLOCK];
 
     indirect_offset *set = new indirect_offset;
-    memcpy(set, blocks + offset * sb.blk_size, sb.blk_size);
+    lseek(fd, blocks + offset * sb.blk_size, SEEK_SET);
+    read(fd, set, sb.blk_size);
 
     for (int i = 0; cnt && i < num_per_indir; ++i, --cnt) {
       dblk.push_back(set->table[i]);
@@ -380,14 +388,16 @@ std::vector<size_t> get_offset(size_t inum, size_t cnt) {
     size_t offset_out = inodes[inum].i_block[EXT2_DIND_BLOCK];
     indirect_offset *set2 = new indirect_offset;
     // restore the layer-1 table
-    memcpy(set2, blocks + offset_out * sb.blk_size, sb.blk_size);
+    lseek(fd, blocks + offset_out * sb.blk_size * sb.blk_size, SEEK_SET);
+    read(fd, set2, sb.blk_size);
 
     for (int j = 0; cnt && j < num_per_indir; ++j, --cnt) {
       // layer-2 table
       size_t offset_in = set2->table[j];
       indirect_offset *set = new indirect_offset;
       // restore the layer-2 table
-      memcpy(set, blocks + offset_in * sb.blk_size, sb.blk_size);
+      lseek(fd, blocks + offset_in * sb.blk_size, SEEK_SET);
+      read(fd, set, sb.blk_size);
 
       for (int i = 0; cnt && i < num_per_indir; ++i, --cnt) {
         dblk.push_back(set->table[i]);
@@ -406,7 +416,7 @@ std::vector<size_t> get_offset(size_t inum, size_t cnt) {
   return dblk;
 }
 
-int write(size_t inum, const char *buffer, size_t size) {
+int do_write(size_t inum, const char *buffer, size_t size) {
   // workaround:: ignore the offset
   // count necessary number by round up of datablock first
   size_t blk_count = (size + sb.blk_size - 1) / sb.blk_size;
@@ -425,9 +435,10 @@ int write(size_t inum, const char *buffer, size_t size) {
               << " file size: " << size << std::endl;
 
     // copy the content
-    memset(blocks + offset * sb.blk_size, 0, sb.blk_size);
-    memcpy(blocks + offset * sb.blk_size, buffer + counter * sb.blk_size,
-           sb.blk_size);
+    lseek(fd, blocks + offset * sb.blk_size, SEEK_SET);
+    write(fd, zero, sb.blk_size);
+    lseek(fd, blocks + offset * sb.blk_size, SEEK_SET);
+    write(fd, buffer + counter * sb.blk_size, sb.blk_size);
     ++counter;
   }
 
@@ -443,7 +454,7 @@ int write(size_t inum, const char *buffer, size_t size) {
   return size;
 }
 
-int read(size_t inum, char *buffer, size_t size) {
+int do_read(size_t inum, char *buffer, size_t size) {
   // workaround:: offset is ignored
   size_t offset = inodes[inum].i_block[0];
 
@@ -454,8 +465,8 @@ int read(size_t inum, char *buffer, size_t size) {
   size_t cnt = 0;
   std::vector<size_t> dblk = get_offset(inum, inodes[inum].i_blocks);
   for (auto offset : dblk) {
-    memcpy(buffer + cnt * sb.blk_size, blocks + offset * sb.blk_size,
-           sb.blk_size);
+    lseek(fd, blocks + offset * sb.blk_size, SEEK_SET);
+    read(fd, buffer + cnt * sb.blk_size, sb.blk_size);
     ++cnt;
   }
 
@@ -495,8 +506,10 @@ void save_entry(size_t inum) {
         new file_name(inodes[inum].entries[conunter]->inode_num,
                       inodes[inum].entries[conunter]->name.c_str());
     //std::cout<<"dir cnt: "<<cnt<<" counter: "<<conunter<<" name: "<<tmp->get_name()<<"  toblk: "<<dblk[conunter]<<std::endl;
-    memset(blocks + dblk[conunter] * sb.blk_size, 0, sb.blk_size);
-    memcpy(blocks + dblk[conunter] * sb.blk_size, tmp, sb.blk_size);
+    lseek(fd, blocks + dblk[conunter] * sb.blk_size, SEEK_SET);
+    write(fd, zero, sb.blk_size);
+    lseek(fd, blocks + dblk[conunter] * sb.blk_size, SEEK_SET);
+    write(fd, tmp, sb.blk_size);
     delete tmp;
   }
 }
@@ -512,7 +525,8 @@ void restore_entry(size_t inum) {
   for (auto offset : dblk) {
     tmp = new file_name();
     memset(tmp, 0, sb.blk_size);
-    memcpy(tmp, blocks + offset * sb.blk_size, sb.blk_size);
+    lseek(fd, blocks + offset * sb.blk_size, SEEK_SET);
+    read(fd, tmp, sb.blk_size);
     inodes[inum].entries.push_back(
         new directory_entry(tmp->inode_num, tmp->get_name()));
     delete tmp;
@@ -620,7 +634,7 @@ static int op_read(const char *path, char *buffer, size_t size, off_t offset,
   std::vector<std::string> splited_path = split_path(path);
   size_t inum = find_inum(splited_path);
   if (imap.test(inum))
-    read(inum, buffer, size);
+    do_read(inum, buffer, size);
 
   return size;
 }
@@ -631,7 +645,7 @@ static int op_write(const char *path, const char *buffer, size_t size,
   std::vector<std::string> splited_path = split_path(path);
   size_t inum = find_inum(splited_path);
   if (imap.test(inum))
-    write(inum, buffer, size);
+    do_write(inum, buffer, size);
 
   return size;
 }
@@ -661,6 +675,11 @@ static int op_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 }
 
 void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
+  memset(zero, 0, BLK_SIZE);
+  std::cout<< "Open blockdev"<<std::endl;
+  fd = open(BLOCK_DEV_PATH,O_RDWR);
+  lseek(fd, 0, SEEK_SET);
+
   // Init superblock
   sb.blk_size = BLK_SIZE;
   sb.fs_size = 0;
@@ -697,8 +716,6 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
 
   std::cout << "Init Root Inode" << std::endl;
 
-  blocks = (char *)malloc(sb.blk_size * sb.dmap_size);
-  // memset(inodes, 0, sizeof(inodes) * sb.imap_size);
   return nullptr;
 }
 

@@ -11,6 +11,8 @@
 #include <stdint.h>
 
 
+#define BLOCK_DEV_PATH  "/dev/sdb"
+
 /*
 Bitmaps:
 */
