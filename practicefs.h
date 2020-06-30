@@ -143,12 +143,15 @@ struct inode {
     size_t        i_parent;   /* The parent of the inode. */
 
     size_t i_block[EXT2_N_BLOCKS]; /* array of blk offsets in storage */
-    std::vector<directory_entry *> entries; /* pointer to dir content list contructed from filelist in blocks */
 
+    // Time related
     struct timespec i_atim;
     struct timespec i_ctim;
     struct timespec i_mtim;
-    // Time Related
+    
+    // replace this with pointer
+    //std::vector<directory_entry *> entries; /* pointer to dir content list contructed from filelist in blocks */
+    size_t		i_file;
 };
 
 

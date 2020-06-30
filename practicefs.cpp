@@ -51,6 +51,7 @@ std::bitset<DMAP_SIZE> dmap(0);
 static size_t blocks = 200 * BLK_SIZE;
 char zero[BLK_SIZE];
 static struct inode inodes[IMAP_SIZE];
+std::vector<directory_entry *> entries[IMAP_SIZE];
 
 // Cache
 std::vector<size_t> blk_cache;
@@ -63,12 +64,12 @@ void commit_sb() {
   write(fd, zero, sb.blk_size);
   lseek(fd, 0 /*SUPERBLK_OFFSET*/ * BLK_SIZE, SEEK_SET);
   write(fd, &sb, /*SUPERBLK_SIZE*/ 64);
-  std::cout<<"Commit Superblock"<<std::endl;
+  //std::cout<<"Commit Superblock"<<std::endl;
 }
 void restore_sb() {
   lseek(fd, 0 /*SUPERBLK_OFFSET*/ * BLK_SIZE, SEEK_SET);
   read(fd, &sb, /*SUPERBLK_SIZE*/ 64);
-  std::cout<<"Restore Superblock"<<std::endl;
+  //std::cout<<"Restore Superblock"<<std::endl;
 }
 
 // commit and restore bitmap
@@ -77,35 +78,35 @@ void restore_sb() {
 void commit_imap() {
   lseek(fd, 1 /*IMAP_OFFSET*/ * BLK_SIZE, SEEK_SET);
   write(fd, &imap, /*IMAP_SIZE*/ sizeof(imap));
-  std::cout<<"Commit IMAP"<<std::endl;
+  //std::cout<<"Commit IMAP"<<std::endl;
 }
 void restore_imap() {
   lseek(fd, 1 /*IMAP_OFFSET*/ * BLK_SIZE, SEEK_SET);
   read(fd, &imap, /*IMAP_SIZE*/ sizeof(inode));
-  std::cout<<"Restore IMAP"<<std::endl;
+  //std::cout<<"Restore IMAP"<<std::endl;
 }
 
 void commit_dmap() {
   lseek(fd, 10 /*DMAP_OFFSET*/ * BLK_SIZE, SEEK_SET);
   write(fd, &dmap, /*DMAP_SIZE*/ sizeof(dmap));
-  std::cout<<"Commit DMAP"<<std::endl;
+  //std::cout<<"Commit DMAP"<<std::endl;
 }
 void restore_dmap() {
   lseek(fd, 10 /*DMAP_OFFSET*/ * BLK_SIZE, SEEK_SET);
   read(fd, &dmap, /*DMAP_SIZE*/ sizeof(dmap));
-  std::cout<<"Restore DMAP"<<std::endl;
+  //std::cout<<"Restore DMAP"<<std::endl;
 }
 
 // commit and restore inodes
 void commit_inode() {
   lseek(fd, 100 /*INODE_OFFSET*/ * BLK_SIZE, SEEK_SET);
   write(fd, &inodes, /*INODE_SIZE * NUMBER */ sizeof(inode) * IMAP_SIZE);
-  std::cout<<"Commit INODE"<<std::endl;
+  //std::cout<<"Commit INODE"<<std::endl;
 }
 void restore_inode() {
   lseek(fd, 100 /*INODE_OFFSET*/ * BLK_SIZE, SEEK_SET);
   read(fd, &inodes, /*INODE_SIZE * NUMBER */ sizeof(inode) * IMAP_SIZE);
-  std::cout<<"Restore INODE"<<std::endl;
+  //std::cout<<"Restore INODE"<<std::endl;
 }
 
 //
@@ -177,12 +178,12 @@ std::string split_filename(const char *path) {
 size_t find_inum_helper(std::vector<std::string> splited_path, size_t pnum,
                         size_t idx) {
   size_t inum = 0;
-  if (!inodes[pnum].entries.size())
+  if (!entries[pnum].size())
     return 0;
   // std::cout<< pnum <<"before loop"<< inodes[pnum].entries.size()<< " depth: "
   // <<idx<< std::endl;
 
-  for (auto entry : inodes[pnum].entries) {
+  for (auto entry : entries[pnum]) {
     if (entry->name == splited_path[idx]) {
       inum = entry->inode_num;
       // std::cout<<"Gotcha: "<<inum<<std::endl;
@@ -200,11 +201,11 @@ size_t find_inum(std::vector<std::string> splited_path) {
   if (splited_path.size() == 1) // only "/", it's root , so inum == 2
     return root_inode_num;
 
-  if (!inodes[inum].entries.size()) {
+  if (!entries[inum].size()) {
     return 0;
   }
 
-  while (idx < splited_path.size() && inodes[inum].entries.size()) {
+  while (idx < splited_path.size() && entries[inum].size()) {
     inum = find_inum_helper(splited_path, inum, idx);
     // std::cout <<" tmp inum: "<< inum << std::endl;
     if (!inum)
@@ -272,9 +273,9 @@ int init_inode(std::string name, size_t inum, size_t parent, INODE_TYPE type) {
     }
 
     // inject the inode into its parent's dir list
-    inodes[parent].entries.push_back(new directory_entry(inum, name));
+    entries[parent].push_back(new directory_entry(inum, name));
     inodes[parent].i_ctim = now;
-
+    save_entry(parent);
     // commit
     commit_inode();
     return 0;
@@ -300,7 +301,7 @@ int rm_inode(std::string path) {
 
   std::cout << path << " tpye: " << inodes[inum].i_type
             << " nlink: " << inodes[inum].i_nlink
-            << " nentry: " << inodes[inum].entries.size() << std::endl;
+            << " nentry: " << entries[inum].size() << std::endl;
 
   bool is_safe = false;
   if (inodes[inum].i_type == IFREG && inodes[inum].i_nlink == 1) {
@@ -308,7 +309,7 @@ int rm_inode(std::string path) {
   } else if (inodes[inum].i_type == IFDIR && inodes[inum].i_nlink == 2) {
     is_safe = true;
   }
-  if (inodes[inum].i_type == IFDIR && inodes[inum].entries.size()) {
+  if (inodes[inum].i_type == IFDIR && entries[inum].size()) {
     std::cout << "Error: dir " << path << " is not empty" << std::endl;
     return -1;
   }
@@ -318,13 +319,15 @@ int rm_inode(std::string path) {
 
   // Remove the inode from parent
   size_t parent = inodes[inum].i_parent;
-  inodes[parent].entries.erase(
-      std::remove_if(inodes[parent].entries.begin(),
-                     inodes[parent].entries.end(),
+  entries[parent].erase(
+      std::remove_if(entries[parent].begin(),
+                     entries[parent].end(),
                      [&](directory_entry *entry) -> bool {
                        return entry->inode_num == inum;
                      }),
-      inodes[parent].entries.end());
+      entries[parent].end());
+
+  save_entry(parent);
   // Dec parent's nlink when removing dir
   if (inodes[inum].i_type == IFDIR) {
     --inodes[parent].i_nlink;
@@ -481,7 +484,8 @@ std::vector<size_t> get_offset(size_t inum, size_t cnt) {
 }
 
 int do_write(size_t inum, const char *buffer, size_t size) {
-  // workaround:: ignore the offset
+  // TODO: fix the ignored operation with byte offset
+  
   // count necessary number by round up of datablock first
   size_t blk_count = (size + sb.blk_size - 1) / sb.blk_size;
   size_t num_per_indir = BLK_SIZE / sizeof(size_t);
@@ -519,7 +523,7 @@ int do_write(size_t inum, const char *buffer, size_t size) {
 }
 
 int do_read(size_t inum, char *buffer, size_t size) {
-  // workaround:: offset is ignored
+  // TODO: fix the ignored operation with byte offset
   size_t offset = inodes[inum].i_block[0];
 
   std::cout << "target inum: " << inum << " target dblock: " << offset
@@ -546,7 +550,7 @@ int do_read(size_t inum, char *buffer, size_t size) {
 // save inode's dir entry into it's datablocks
 //
 void save_entry(size_t inum) {
-  size_t cnt = inodes[inum].entries.size();
+  size_t cnt = entries[inum].size();
   // update the saved entry num
   inodes[inum].i_size = cnt;
 
@@ -565,15 +569,15 @@ void save_entry(size_t inum) {
   // dump the content of dir
   // file_name tmp[cnt];
   // std::cout<<"Saving"<<std::endl;
-  for (size_t conunter = 0; conunter < cnt; ++conunter) {
+  for (size_t counter = 0; counter < cnt; ++counter) {
     file_name *tmp =
-        new file_name(inodes[inum].entries[conunter]->inode_num,
-                      inodes[inum].entries[conunter]->name.c_str());
-    // std::cout<<"dir cnt: "<<cnt<<" counter: "<<conunter<<" name:
-    // "<<tmp->get_name()<<"  toblk: "<<dblk[conunter]<<std::endl;
-    lseek(fd, blocks + dblk[conunter] * sb.blk_size, SEEK_SET);
+        new file_name(entries[inum][counter]->inode_num,
+                      entries[inum][counter]->name.c_str());
+    // std::cout<<"dir cnt: "<<cnt<<" counter: "<<counter<<" name:
+    // "<<tmp->get_name()<<"  toblk: "<<dblk[counter]<<std::endl;
+    lseek(fd, blocks + dblk[counter] * sb.blk_size, SEEK_SET);
     write(fd, zero, sb.blk_size);
-    lseek(fd, blocks + dblk[conunter] * sb.blk_size, SEEK_SET);
+    lseek(fd, blocks + dblk[counter] * sb.blk_size, SEEK_SET);
     write(fd, tmp, sb.blk_size);
     delete tmp;
   }
@@ -584,23 +588,41 @@ void save_entry(size_t inum) {
 //
 void restore_entry(size_t inum) {
   // copy the content
-  inodes[inum].entries.clear();
+  
+  std::vector<directory_entry *> arr;
   std::vector<size_t> dblk = get_offset(inum, inodes[inum].i_size);
   file_name *tmp;
   for (auto offset : dblk) {
+    std::cout<<"entry num: "<<inum<<" blk offset: "<<offset<<" entry cnt:"<<inodes[inum].i_size<<std::endl;
     tmp = new file_name();
     memset(tmp, 0, sb.blk_size);
     lseek(fd, blocks + offset * sb.blk_size, SEEK_SET);
     read(fd, tmp, sb.blk_size);
-    inodes[inum].entries.push_back(
+    arr.push_back(
         new directory_entry(tmp->inode_num, tmp->get_name()));
     delete tmp;
   }
+  entries[inum] = std::move(arr);
 
-  // for (auto entry : inodes[inum].entries) {
-  //  std::cout <<"name: "<< entry->name <<" inum: "<<entry->inode_num<<
-  //  std::endl;
-  //}
+  //unsigned char *p = (unsigned char *)&inodes[inum].entries;
+  //for (size_t i=0; i < sizeof inodes[inum].entries; ++i)
+  //    printf("%02x\n", p[i]);
+  //std::cout<<"Crash?"<<&inodes[inum]<<(&inodes[inum].entries)<<&arr<<std::endl;
+  ////this line crash the process when cross processes rebuilding entry
+  ////inodes[inum].entries = std::move(arr);
+  //memset(p, 0, 8);
+  ////memcpy(&inodes[inum]+248, &arr,8);
+  //std::cout<<"sett"<<(&inodes[inum].entries)<<&arr<<std::endl;
+  //for (size_t i=0; i < sizeof inodes[inum].entries; ++i)
+  //    printf("%02x\n", p[i]);
+
+  for (auto entry : entries[inum]) {
+    if(entry->inode_num)
+    std::cout <<"name: "<< entry->name <<" inum: "<<entry->inode_num<<
+    std::endl;
+  }
+
+
 }
 
 // Functions
@@ -615,7 +637,7 @@ static int op_getattr(const char *path, struct stat *st,
   memset(st, 0, sizeof(struct stat));
 
   if (inum && imap.test(inum)) {
-    print_inode(inum);
+    //print_inode(inum);
     st->st_ino = inodes[inum].i_number;
     st->st_uid = inodes[inum].i_uid;
     st->st_gid = inodes[inum].i_gid;
@@ -730,7 +752,7 @@ static int op_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
 
   if (inodes[inum].i_type == IFDIR) {
 
-    for (auto entry : inodes[inum].entries) {
+    for (auto entry : entries[inum]) {
       // std::cout<<entry->name<<std::endl;
       filler(buffer, entry->name.c_str(), NULL, 0, FUSE_FILL_DIR_PLUS);
     }
@@ -791,7 +813,7 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
     inodes[root_inode_num].i_size = 4;
     inodes[root_inode_num].i_nlink = 2;
     inodes[root_inode_num].i_parent = 0;
-    inodes[root_inode_num].entries.clear();
+    entries[root_inode_num].clear();
 
     // std::string s = "/";
     // inodes[root_inode_num].i_name = &s;
@@ -815,6 +837,17 @@ void *op_init(struct fuse_conn_info *conn, struct fuse_config *config) {
     restore_imap();
     restore_dmap();
     restore_inode();
+
+    // construct the entry cache from datablk
+    std::vector<size_t> tmp;
+    for(size_t i = 0; i < imap.size();++i){
+      if(imap.test(i))
+        tmp.push_back(i);
+    }
+    for(auto inum: tmp)
+      if(inodes[inum].i_type == IFDIR)
+        restore_entry(inum);
+    std::cout<<"Restore entries finish"<<std::endl;
   }
   return nullptr;
 }
