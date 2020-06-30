@@ -11,19 +11,35 @@ mknod
 mkdir
 unlink
 rmdir
-read
-write
+read(partially works)
+write(partially works)
 readdir
 init
 utimens
 
-IN BLK DEV:
-Nothing working
+IN BLK DEV(ONLY in block branch now):
+getattr
+mknod
+mkdir
+unlink
+rmdir
+read(partially works)
+write(partially works)
+readdir
+init
+utimens
 
 # Todo
 IN RAM:
 triple indirect offset
+read with offset
+write with offset
 ... and so on
 
 IN BLK DEV:
-Everything
+revise the disk layout
+more smart space utilization
+triple indirect offset
+read with offset
+write with offset
+... and so on
